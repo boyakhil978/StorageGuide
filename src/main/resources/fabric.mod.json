@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "storageguide",
+  "version": "${version}",
+  "name": "StorageGuide",
+  "description": "Server-backed storage room item highlighter.",
+  "authors": [
+    "StorageGuide"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.storageguide.StorageGuideMod"
+    ],
+    "client": [
+      "com.storageguide.StorageGuideClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": ">=26.1",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
