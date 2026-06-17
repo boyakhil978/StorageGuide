@@ -1,8 +1,22 @@
 # StorageGuide
 
-StorageGuide is a Fabric client/server mod for Minecraft `26.1.2+` that maps one vertical storage-room wall into one-block double-chest cells, then helps players find where an item belongs.
+Stop hunting through an entire storage room for one missing item. StorageGuide lets a server define one shared storage wall, assign items to chest slots, and highlight exactly where players should go.
 
-The same jar is used on the server and on clients. The server owns exactly one StorageGuide configuration file at `config/storageguide.json`; clients request selection, editing, and lookup actions through Fabric networking.
+StorageGuide is a Fabric client/server mod for Minecraft `26.1.2+`. Operators map a vertical storage-room wall into one-block double-chest cells, then assign items with an in-game editor. Players can hold an item or use the finder menu to highlight the matching chest slot.
+
+## Features
+
+- Server-backed storage guide shared by everyone on the server.
+- One jar for both client and server.
+- Operator-only grid creation and item assignment.
+- Simple in-world highlights for storage cells and lookup results.
+- Finder menu with readable item names like `emerald`.
+- Quick locate key for the item in your hand.
+- One authoritative config file: `config/storageguide.json`.
+
+## How It Works
+
+StorageGuide treats one vertical side of your storage room as a grid. Each selected block in that wall represents one double chest slot. The server stores the grid and item assignments; clients only request actions and render highlights locally.
 
 ## Requirements
 
@@ -21,25 +35,33 @@ The server stores the shared storage wall configuration in:
 
 ## Controls
 
-- `[` selects/edits the storage grid. Operators use this to create the grid or edit a highlighted cell.
+- `[` selects or edits the storage grid. Operators use this to create the grid or edit a highlighted cell.
 - `O` opens the item finder menu.
 - `P` locates the held item.
 
 All keybinds are configurable from Minecraft's keybinds screen.
 
-## Operator Flow
+## For Operators
 
-If no server configuration exists, an operator presses the select/edit key while looking at one corner, then presses it again while looking at the opposite vertical corner. The selected corners must be on a vertical plane: either the same X coordinate or the same Z coordinate. Each block in that selected rectangle becomes one double-chest slot in the grid.
+Create the grid:
 
-If a configuration already exists, pressing the select/edit key highlights the grid. Looking at a highlighted block and pressing the key again opens a graphical editor for that cell. Escape, the pause menu, or rejoining exits edit mode without saving.
+1. Look at one corner of the storage wall and press the select/edit key.
+2. Look at the opposite corner on the same vertical plane and press the key again.
+3. The server creates one storage cell for every block in the selected rectangle.
 
-The editor lists game items by readable names such as `emerald`; the server still saves valid item ids internally.
+Edit assignments:
 
-## Player Flow
+1. Press the select/edit key to highlight the existing grid.
+2. Look at a highlighted cell and press the key again.
+3. Pick an item from the editor and save.
 
-Any player can press the locate key while holding an item. The server finds the configured cell and sends a highlight back to that player.
+Escape, the pause menu, or rejoining exits edit mode without saving.
 
-Any player can also open the item finder menu, type or search for an item, and request a highlight.
+## For Players
+
+- Hold an item and press the locate key to highlight its assigned chest slot.
+- Open the finder menu to search for an item manually.
+- Highlights are local to you; the server remains the source of truth.
 
 ## Release Channels
 
@@ -49,6 +71,11 @@ StorageGuide uses two release channels:
 - Beta: test builds, tagged as `vX.Y.Z-beta.N` and published to Modrinth as Beta.
 
 Current stable release: `v1.0.0`.
+
+## Source And License
+
+- Source: https://github.com/boyakhil978/StorageGuide
+- License: MIT
 
 ## Building
 

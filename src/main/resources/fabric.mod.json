@@ -3,7 +3,7 @@
   "id": "storageguide",
   "version": "${version}",
   "name": "StorageGuide",
-  "description": "Server-backed storage room item highlighter.",
+  "description": "Find items faster with a server-backed storage wall map and in-world chest highlights.",
   "authors": [
     "StorageGuide"
   ],
