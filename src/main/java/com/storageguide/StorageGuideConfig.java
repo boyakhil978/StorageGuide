@@ -17,7 +17,7 @@ import java.util.Optional;
 public final class StorageGuideConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    int version = 2;
+    int version = 3;
     StoredPos topLeft;
     StoredPos bottomRight;
     List<StorageCell> cells = new ArrayList<>();
@@ -37,6 +37,8 @@ public final class StorageGuideConfig {
             if (loaded.cells == null) {
                 loaded.cells = new ArrayList<>();
             }
+            loaded.version = 3;
+            loaded.cells.forEach(StorageCell::migrate);
             return loaded;
         } catch (IOException | RuntimeException ex) {
             return new StorageGuideConfig();
@@ -68,7 +70,7 @@ public final class StorageGuideConfig {
 
     public Optional<StorageCell> findCellForItem(String itemId) {
         return cells.stream()
-                .filter(cell -> itemId.equals(cell.itemId))
+                .filter(cell -> cell.containsItem(itemId))
                 .findFirst();
     }
 
@@ -86,7 +88,7 @@ public final class StorageGuideConfig {
 
     public List<StorageGuideNetworking.CellDto> toDtos() {
         return cells.stream()
-                .map(cell -> new StorageGuideNetworking.CellDto(cell.id, cell.origin.toBlockPos(), cell.itemId == null ? "" : cell.itemId))
+                .map(cell -> new StorageGuideNetworking.CellDto(cell.id, cell.origin.toBlockPos(), cell.itemIds()))
                 .toList();
     }
 
@@ -107,6 +109,7 @@ public final class StorageGuideConfig {
         int width = 1;
         int height = 1;
         String itemId;
+        List<String> itemIds = new ArrayList<>();
 
         public String id() {
             return id;
@@ -116,12 +119,33 @@ public final class StorageGuideConfig {
             return origin.toBlockPos();
         }
 
-        public String itemId() {
-            return itemId == null ? "" : itemId;
+        void migrate() {
+            if (itemIds == null) {
+                itemIds = new ArrayList<>();
+            }
+            if (itemId != null && !itemId.isBlank() && !itemIds.contains(itemId)) {
+                itemIds.add(itemId);
+            }
+            itemId = null;
         }
 
-        public void setItemId(String itemId) {
-            this.itemId = itemId == null || itemId.isBlank() ? null : itemId.trim();
+        public List<String> itemIds() {
+            migrate();
+            return List.copyOf(itemIds);
+        }
+
+        public boolean containsItem(String itemId) {
+            migrate();
+            return itemIds.contains(itemId);
+        }
+
+        public void setItemIds(List<String> itemIds) {
+            this.itemIds = itemIds == null ? new ArrayList<>() : itemIds.stream()
+                    .filter(item -> item != null && !item.isBlank())
+                    .map(String::trim)
+                    .distinct()
+                    .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
+            this.itemId = null;
         }
 
         boolean contains(BlockPos pos) {

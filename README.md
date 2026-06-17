@@ -8,7 +8,7 @@ StorageGuide is a Fabric client/server mod for Minecraft `26.1.2+`. Operators ma
 
 - Server-backed storage guide shared by everyone on the server.
 - One jar for both client and server.
-- Operator-only grid creation and item assignment.
+- Operator-only grid creation and multi-item assignment.
 - Simple in-world highlights for storage cells and lookup results.
 - Finder menu with readable item names like `emerald`.
 - Quick locate key for the item in your hand.
@@ -16,7 +16,7 @@ StorageGuide is a Fabric client/server mod for Minecraft `26.1.2+`. Operators ma
 
 ## How It Works
 
-StorageGuide treats one vertical side of your storage room as a grid. Each selected block in that wall represents one double chest slot. The server stores the grid and item assignments; clients only request actions and render highlights locally.
+StorageGuide treats one vertical side of your storage room as a grid. Each selected block in that wall represents one double chest slot. A chest slot can have multiple assigned items, but each item can belong to only one chest slot. The server stores the grid and item assignments; clients only request actions and render highlights locally.
 
 ## Requirements
 
@@ -53,7 +53,9 @@ Edit assignments:
 
 1. Press the select/edit key to highlight the existing grid.
 2. Look at a highlighted cell and press the key again.
-3. Pick an item from the editor and save.
+3. Check one or more items in the editor and save.
+
+When an item is assigned to a chest, StorageGuide removes that same item from any other chest so lookup results stay unambiguous.
 
 Escape, the pause menu, or rejoining exits edit mode without saving.
 
@@ -85,4 +87,4 @@ Current stable release: `v1.0.0`.
 
 The release jar is generated at:
 
-`build/libs/storageguide-1.0.0.jar`
+`build/libs/storageguide-<version>.jar`

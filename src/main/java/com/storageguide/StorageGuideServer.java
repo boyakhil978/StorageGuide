@@ -46,7 +46,7 @@ public final class StorageGuideServer {
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.REQUEST_EDIT_CELL, (payload, context) ->
                 context.server().execute(() -> openEditor(context.player(), payload.pos())));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.EDIT_CELL, (payload, context) ->
-                context.server().execute(() -> editCell(context.player(), payload.cellId(), payload.itemId())));
+                context.server().execute(() -> editCell(context.player(), payload.cellId(), payload.itemIds())));
     }
 
     private static void beginSelect(ServerPlayer player) {
@@ -102,7 +102,7 @@ public final class StorageGuideServer {
         message(player, "StorageGuide find menu synced from the server.");
     }
 
-    private static void editCell(ServerPlayer player, String cellId, String itemId) {
+    private static void editCell(ServerPlayer player, String cellId, java.util.List<String> itemIds) {
         if (!canEdit(player)) {
             message(player, "StorageGuide editing requires operator permission.");
             return;
@@ -114,26 +114,36 @@ public final class StorageGuideServer {
             return;
         }
 
-        String normalized = normalizeItemId(itemId);
-        if (!normalized.isEmpty() && Identifier.tryParse(normalized) == null) {
-            message(player, "StorageGuide item ids must look like emerald or minecraft:emerald.");
-            return;
-        }
-        if (!normalized.isEmpty() && !BuiltInRegistries.ITEM.containsKey(Identifier.parse(normalized))) {
-            message(player, "StorageGuide does not know item id " + normalized + ".");
-            return;
-        }
+        java.util.List<String> normalized = itemIds == null ? java.util.List.of() : itemIds.stream()
+                .map(StorageGuideServer::normalizeItemId)
+                .filter(item -> !item.isBlank())
+                .distinct()
+                .toList();
 
-        for (StorageGuideConfig.StorageCell existing : config.cells) {
-            if (!normalized.isEmpty() && normalized.equals(existing.itemId())) {
-                existing.setItemId("");
+        for (String itemId : normalized) {
+            if (Identifier.tryParse(itemId) == null) {
+                message(player, "StorageGuide item ids must look like emerald or minecraft:emerald.");
+                return;
+            }
+            if (!BuiltInRegistries.ITEM.containsKey(Identifier.parse(itemId))) {
+                message(player, "StorageGuide does not know item id " + itemId + ".");
+                return;
             }
         }
 
-        cell.get().setItemId(normalized);
+        for (StorageGuideConfig.StorageCell existing : config.cells) {
+            if (!existing.id().equals(cellId)) {
+                java.util.List<String> remaining = existing.itemIds().stream()
+                        .filter(existingItem -> !normalized.contains(existingItem))
+                        .toList();
+                existing.setItemIds(remaining);
+            }
+        }
+
+        cell.get().setItemIds(normalized);
         save();
         sendStateToAll();
-        message(player, normalized.isEmpty() ? "StorageGuide cell cleared." : "StorageGuide cell assigned to " + normalized + ".");
+        message(player, normalized.isEmpty() ? "StorageGuide cell cleared." : "StorageGuide cell assigned " + normalized.size() + " item(s).");
     }
 
     public static void openEditor(ServerPlayer player, BlockPos pos) {
@@ -150,7 +160,7 @@ public final class StorageGuideServer {
 
         StorageGuideConfig.StorageCell found = cell.get();
         ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenEditorPayload(
-                new StorageGuideNetworking.CellDto(found.id(), found.origin(), found.itemId())
+                new StorageGuideNetworking.CellDto(found.id(), found.origin(), found.itemIds())
         ));
     }
 

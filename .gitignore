@@ -5,6 +5,7 @@ logs/
 *.log
 *.hprof
 .idea/
+.vscode/
 *.iml
 .DS_Store
 PLAN.md

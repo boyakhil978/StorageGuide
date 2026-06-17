@@ -111,10 +111,10 @@ public final class StorageGuideNetworking {
         }
     }
 
-    public record EditCellPayload(String cellId, String itemId) implements CustomPacketPayload {
+    public record EditCellPayload(String cellId, List<String> itemIds) implements CustomPacketPayload {
         static final StreamCodec<RegistryFriendlyByteBuf, EditCellPayload> CODEC = StreamCodec.composite(
                 ByteBufCodecs.STRING_UTF8, EditCellPayload::cellId,
-                ByteBufCodecs.STRING_UTF8, EditCellPayload::itemId,
+                ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8, 1024), EditCellPayload::itemIds,
                 EditCellPayload::new
         );
 
@@ -124,11 +124,11 @@ public final class StorageGuideNetworking {
         }
     }
 
-    public record CellDto(String id, BlockPos pos, String itemId) {
+    public record CellDto(String id, BlockPos pos, List<String> itemIds) {
         static final StreamCodec<ByteBuf, CellDto> CODEC = StreamCodec.composite(
                 ByteBufCodecs.STRING_UTF8, CellDto::id,
                 BlockPos.STREAM_CODEC, CellDto::pos,
-                ByteBufCodecs.STRING_UTF8, CellDto::itemId,
+                ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8, 1024), CellDto::itemIds,
                 CellDto::new
         );
     }

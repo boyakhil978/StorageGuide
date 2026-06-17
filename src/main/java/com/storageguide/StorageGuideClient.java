@@ -44,10 +44,12 @@ import org.lwjgl.system.MemoryUtil;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
+import java.util.Set;
 
 public final class StorageGuideClient implements ClientModInitializer {
     private static final RenderPipeline HIGHLIGHT_PIPELINE = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
@@ -393,13 +395,16 @@ public final class StorageGuideClient implements ClientModInitializer {
         private final StorageGuideNetworking.CellDto cell;
         private final List<Button> itemButtons = new ArrayList<>();
         private EditBox searchBox;
-        private String selectedItemId;
+        private Set<String> selectedItemIds;
         private int scrollOffset;
 
         private CellEditorScreen(StorageGuideNetworking.CellDto cell) {
             super(Component.literal("StorageGuide Cell " + cell.id()));
             this.cell = cell;
-            this.selectedItemId = normalizeClientItemId(cell.itemId());
+            this.selectedItemIds = cell.itemIds().stream()
+                    .map(StorageGuideClient::normalizeClientItemId)
+                    .filter(item -> !item.isBlank())
+                    .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
         }
 
         @Override
@@ -432,11 +437,11 @@ public final class StorageGuideClient implements ClientModInitializer {
                 refreshItems();
             }).bounds(center - 62, top + 28 + VISIBLE_ITEMS * 22, 58, 20).build());
             this.addRenderableWidget(Button.builder(Component.literal("Save"), button -> {
-                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), this.selectedItemId == null ? "" : this.selectedItemId));
+                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), List.copyOf(this.selectedItemIds)));
                 this.onClose();
             }).bounds(center + 4, top + 28 + VISIBLE_ITEMS * 22, 56, 20).build());
             this.addRenderableWidget(Button.builder(Component.literal("Clear"), button -> {
-                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), ""));
+                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), List.of()));
                 this.onClose();
             }).bounds(center + 66, top + 28 + VISIBLE_ITEMS * 22, 54, 20).build());
             this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
@@ -470,7 +475,7 @@ public final class StorageGuideClient implements ClientModInitializer {
                 ItemOption option = filtered.get(index);
                 button.visible = true;
                 button.active = true;
-                button.setMessage(Component.literal((option.id().equals(selectedItemId) ? "[x] " : "[ ] ") + option.displayName()));
+                button.setMessage(Component.literal((selectedItemIds.contains(option.id()) ? "[x] " : "[ ] ") + option.displayName()));
             }
         }
 
@@ -482,7 +487,9 @@ public final class StorageGuideClient implements ClientModInitializer {
             }
 
             ItemOption option = filtered.get(index);
-            selectedItemId = option.id().equals(selectedItemId) ? "" : option.id();
+            if (!selectedItemIds.remove(option.id())) {
+                selectedItemIds.add(option.id());
+            }
             refreshItems();
         }
 
@@ -490,7 +497,7 @@ public final class StorageGuideClient implements ClientModInitializer {
             String query = this.searchBox == null ? "" : this.searchBox.getValue().trim().toLowerCase();
             return ITEM_OPTIONS.stream()
                     .filter(option -> option.displayName().contains(query) || option.id().contains(query))
-                    .sorted(Comparator.comparing((ItemOption option) -> !option.id().equals(selectedItemId))
+                    .sorted(Comparator.comparing((ItemOption option) -> !selectedItemIds.contains(option.id()))
                             .thenComparing(ItemOption::displayName))
                     .limit(256)
                     .toList();
