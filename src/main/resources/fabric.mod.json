@@ -9,6 +9,7 @@
   ],
   "contact": {},
   "license": "MIT",
+  "icon": "assets/storageguide/icon.png",
   "environment": "*",
   "entrypoints": {
     "main": [
