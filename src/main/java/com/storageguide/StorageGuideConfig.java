@@ -18,6 +18,7 @@ public final class StorageGuideConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     int version = 3;
+    boolean sloppinessDetector = false;
     StoredPos topLeft;
     StoredPos bottomRight;
     List<StorageCell> cells = new ArrayList<>();
@@ -58,6 +59,14 @@ public final class StorageGuideConfig {
 
     public boolean hasGrid() {
         return topLeft != null && bottomRight != null && !cells.isEmpty();
+    }
+
+    public boolean sloppinessDetector() {
+        return sloppinessDetector;
+    }
+
+    public void setSloppinessDetector(boolean enabled) {
+        this.sloppinessDetector = enabled;
     }
 
     public void rebuild(BlockPos topLeft, BlockPos bottomRight) {

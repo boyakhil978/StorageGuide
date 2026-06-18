@@ -1,5 +1,6 @@
 package com.storageguide;
 
+import com.storageguide.mixin.CompoundContainerAccessor;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -8,14 +9,33 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.NameAndId;
+import net.minecraft.world.CompoundContainer;
+import net.minecraft.world.Container;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 public final class StorageGuideServer {
+    private static final long SLOPPINESS_COOLDOWN_MS = 30_000L;
+
     private static StorageGuideConfig config = new StorageGuideConfig();
     private static Path configPath;
     private static MinecraftServer activeServer;
+    private static Map<BlockPos, StorageGuideConfig.StorageCell> cellsByPosition = Map.of();
+    private static final Map<UUID, Long> lastPlayerSloppinessAnnouncement = new HashMap<>();
+    private static final Map<BlockPos, Long> lastChestSloppinessAnnouncement = new HashMap<>();
 
     private StorageGuideServer() {
     }
@@ -24,12 +44,17 @@ public final class StorageGuideServer {
         activeServer = server;
         configPath = server.getFile("config").resolve("storageguide.json");
         config = StorageGuideConfig.load(configPath);
+        config.save(configPath);
+        rebuildCaches();
     }
 
     public static void clear() {
         config = new StorageGuideConfig();
         configPath = null;
         activeServer = null;
+        cellsByPosition = Map.of();
+        lastPlayerSloppinessAnnouncement.clear();
+        lastChestSloppinessAnnouncement.clear();
     }
 
     public static void registerReceivers() {
@@ -74,6 +99,7 @@ public final class StorageGuideServer {
         try {
             config.rebuild(first, second);
             save();
+            rebuildCaches();
             sendStateToAll();
             message(player, "StorageGuide server grid saved with " + config.cells.size() + " cells.");
         } catch (IllegalArgumentException ex) {
@@ -142,6 +168,7 @@ public final class StorageGuideServer {
 
         cell.get().setItemIds(normalized);
         save();
+        rebuildCaches();
         sendStateToAll();
         message(player, normalized.isEmpty() ? "StorageGuide cell cleared." : "StorageGuide cell assigned " + normalized.size() + " item(s).");
     }
@@ -205,5 +232,91 @@ public final class StorageGuideServer {
         if (configPath != null) {
             config.save(configPath);
         }
+    }
+
+    public static boolean sloppinessDetectorEnabled() {
+        return config.sloppinessDetector();
+    }
+
+    public static void setSloppinessDetector(boolean enabled) {
+        config.setSloppinessDetector(enabled);
+        save();
+    }
+
+    public static void afterContainerClick(AbstractContainerMenu menu, Player player) {
+        if (!(player instanceof ServerPlayer serverPlayer) || !(menu instanceof ChestMenu chestMenu)) {
+            return;
+        }
+        if (!config.sloppinessDetector() || !config.hasGrid() || cellsByPosition.isEmpty()) {
+            return;
+        }
+
+        Container container = chestMenu.getContainer();
+        RelevantChest relevantChest = findRelevantChest(container).orElse(null);
+        if (relevantChest == null || relevantChest.cell().itemIds().isEmpty()) {
+            return;
+        }
+
+        Set<String> allowedItems = new HashSet<>(relevantChest.cell().itemIds());
+        for (ItemStack stack : container) {
+            if (stack.isEmpty()) {
+                continue;
+            }
+
+            String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            if (!allowedItems.contains(itemId)) {
+                announceSloppiness(serverPlayer, relevantChest.pos());
+                return;
+            }
+        }
+    }
+
+    private static Optional<RelevantChest> findRelevantChest(Container container) {
+        for (ChestBlockEntity chest : chestBlockEntities(container)) {
+            StorageGuideConfig.StorageCell cell = cellsByPosition.get(chest.getBlockPos());
+            if (cell != null) {
+                return Optional.of(new RelevantChest(chest.getBlockPos(), cell));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static List<ChestBlockEntity> chestBlockEntities(Container container) {
+        List<ChestBlockEntity> chests = new ArrayList<>();
+        if (container instanceof ChestBlockEntity chest) {
+            chests.add(chest);
+        } else if (container instanceof CompoundContainer compound) {
+            CompoundContainerAccessor accessor = (CompoundContainerAccessor) compound;
+            chests.addAll(chestBlockEntities(accessor.storageguide$container1()));
+            chests.addAll(chestBlockEntities(accessor.storageguide$container2()));
+        }
+        return chests;
+    }
+
+    private static void announceSloppiness(ServerPlayer player, BlockPos chestPos) {
+        long now = System.currentTimeMillis();
+        Long playerLast = lastPlayerSloppinessAnnouncement.get(player.getUUID());
+        Long chestLast = lastChestSloppinessAnnouncement.get(chestPos);
+        if ((playerLast != null && now - playerLast < SLOPPINESS_COOLDOWN_MS)
+                || (chestLast != null && now - chestLast < SLOPPINESS_COOLDOWN_MS)) {
+            return;
+        }
+
+        lastPlayerSloppinessAnnouncement.put(player.getUUID(), now);
+        lastChestSloppinessAnnouncement.put(chestPos, now);
+        if (activeServer != null) {
+            activeServer.getPlayerList().broadcastSystemMessage(Component.literal("Sloppiness detected " + player.getScoreboardName() + "!"), false);
+        }
+    }
+
+    private static void rebuildCaches() {
+        Map<BlockPos, StorageGuideConfig.StorageCell> cells = new HashMap<>();
+        for (StorageGuideConfig.StorageCell cell : config.cells) {
+            cells.put(cell.origin(), cell);
+        }
+        cellsByPosition = Map.copyOf(cells);
+    }
+
+    private record RelevantChest(BlockPos pos, StorageGuideConfig.StorageCell cell) {
     }
 }

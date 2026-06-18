@@ -9,6 +9,7 @@ public final class StorageGuideMod implements ModInitializer {
     @Override
     public void onInitialize() {
         StorageGuideNetworking.registerPayloads();
+        StorageGuideCommands.register();
         StorageGuideServer.registerReceivers();
         ServerLifecycleEvents.SERVER_STARTING.register(StorageGuideServer::load);
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> StorageGuideServer.clear());

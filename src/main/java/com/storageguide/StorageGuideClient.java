@@ -68,6 +68,7 @@ public final class StorageGuideClient implements ClientModInitializer {
     private BufferBuilder buffer;
     private MappableRingBuffer vertexBuffer;
 
+    private static StorageGuideClientConfig clientConfig;
     private static boolean hasGrid;
     private static boolean canEdit;
     private static boolean requestedInitialState;
@@ -79,6 +80,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        clientConfig = StorageGuideClientConfig.load();
         this.selectOrEditKey = registerKey("select_or_edit", GLFW.GLFW_KEY_LEFT_BRACKET);
         this.locateHeldKey = registerKey("locate_held_item", GLFW.GLFW_KEY_P);
         this.findMenuKey = registerKey("find_menu", GLFW.GLFW_KEY_O);
@@ -113,12 +115,12 @@ public final class StorageGuideClient implements ClientModInitializer {
                         activeHighlight = pos;
                         activeHighlightUntilMs = System.currentTimeMillis() + 8000L;
                     }, () -> activeHighlight = null);
-                    message(context.client(), payload.message());
+                    debugMessage(context.client(), payload.message());
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR, (payload, context) ->
                 context.client().execute(() -> context.client().setScreen(new CellEditorScreen(payload.cell()))));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.MESSAGE, (payload, context) ->
-                context.client().execute(() -> message(context.client(), payload.message())));
+                context.client().execute(() -> debugMessage(context.client(), payload.message())));
     }
 
     private void onClientTick(Minecraft client) {
@@ -235,6 +237,12 @@ public final class StorageGuideClient implements ClientModInitializer {
     private static void message(Minecraft client, String message) {
         if (client.player != null && message != null && !message.isBlank()) {
             client.player.sendSystemMessage(Component.literal(message));
+        }
+    }
+
+    private static void debugMessage(Minecraft client, String message) {
+        if (clientConfig != null && clientConfig.debugMode()) {
+            message(client, message);
         }
     }
 
