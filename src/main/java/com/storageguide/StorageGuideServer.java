@@ -90,6 +90,10 @@ public final class StorageGuideServer {
                 context.server().execute(() -> openEditor(context.player(), payload.pos())));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.EDIT_CELL, (payload, context) ->
                 context.server().execute(() -> editCell(context.player(), payload.cellId(), payload.itemIds())));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.REQUEST_OPERATOR_SETTINGS, (payload, context) ->
+                context.server().execute(() -> openOperatorSettings(context.player())));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS, (payload, context) ->
+                context.server().execute(() -> updateOperatorSettings(context.player(), payload.sloppinessDetector())));
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
                 clientVersions.remove(handler.player.getUUID()));
     }
@@ -252,6 +256,32 @@ public final class StorageGuideServer {
         sendIfSupported(player, new StorageGuideNetworking.OpenEditorPayload(
                 new StorageGuideNetworking.CellDto(found.id(), found.origin(), found.itemIds())
         ));
+    }
+
+    public static void openOperatorSettings(ServerPlayer player) {
+        if (!canEdit(player)) {
+            message(player, "StorageGuide settings require operator permission.");
+            return;
+        }
+        if (!ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS)) {
+            message(player, "Your StorageGuide client does not support the operator settings menu.");
+            return;
+        }
+
+        ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsPayload(
+                config.sloppinessDetector()
+        ));
+    }
+
+    private static void updateOperatorSettings(ServerPlayer player, boolean sloppinessDetector) {
+        if (!canEdit(player)) {
+            message(player, "StorageGuide settings require operator permission.");
+            return;
+        }
+
+        config.setSloppinessDetector(sloppinessDetector);
+        save();
+        message(player, "StorageGuide operator settings saved.");
     }
 
     private static void sendState(ServerPlayer player) {

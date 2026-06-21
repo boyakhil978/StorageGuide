@@ -28,10 +28,13 @@ public final class StorageGuideNetworking {
     public static final CustomPacketPayload.Type<OpenFindPayload> OPEN_FIND = type("open_find");
     public static final CustomPacketPayload.Type<RequestEditCellPayload> REQUEST_EDIT_CELL = type("request_edit_cell");
     public static final CustomPacketPayload.Type<EditCellPayload> EDIT_CELL = type("edit_cell");
+    public static final CustomPacketPayload.Type<RequestOperatorSettingsPayload> REQUEST_OPERATOR_SETTINGS = type("request_operator_settings");
+    public static final CustomPacketPayload.Type<UpdateOperatorSettingsPayload> UPDATE_OPERATOR_SETTINGS = type("update_operator_settings");
     public static final CustomPacketPayload.Type<StatePayload> STATE = type("state");
     public static final CustomPacketPayload.Type<HighlightPayload> HIGHLIGHT = type("highlight");
     public static final CustomPacketPayload.Type<OpenEditorPayload> OPEN_EDITOR = type("open_editor");
     public static final CustomPacketPayload.Type<MessagePayload> MESSAGE = type("message");
+    public static final CustomPacketPayload.Type<OpenOperatorSettingsPayload> OPEN_OPERATOR_SETTINGS = type("open_operator_settings");
 
     public static void registerPayloads() {
         PayloadTypeRegistry.serverboundPlay().register(REQUEST_STATE, RequestStatePayload.CODEC);
@@ -44,11 +47,14 @@ public final class StorageGuideNetworking {
         PayloadTypeRegistry.serverboundPlay().register(OPEN_FIND, OpenFindPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(REQUEST_EDIT_CELL, RequestEditCellPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(EDIT_CELL, EditCellPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(REQUEST_OPERATOR_SETTINGS, RequestOperatorSettingsPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(UPDATE_OPERATOR_SETTINGS, UpdateOperatorSettingsPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(STATE, StatePayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(HIGHLIGHT, HighlightPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_EDITOR, OpenEditorPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(MESSAGE, MessagePayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(SERVER_HELLO, ServerHelloPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(OPEN_OPERATOR_SETTINGS, OpenOperatorSettingsPayload.CODEC);
     }
 
     private static <T extends CustomPacketPayload> CustomPacketPayload.Type<T> type(String path) {
@@ -179,6 +185,28 @@ public final class StorageGuideNetworking {
         }
     }
 
+    public record RequestOperatorSettingsPayload() implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, RequestOperatorSettingsPayload> CODEC =
+                StreamCodec.unit(new RequestOperatorSettingsPayload());
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return REQUEST_OPERATOR_SETTINGS;
+        }
+    }
+
+    public record UpdateOperatorSettingsPayload(boolean sloppinessDetector) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, UpdateOperatorSettingsPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, UpdateOperatorSettingsPayload::sloppinessDetector,
+                UpdateOperatorSettingsPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return UPDATE_OPERATOR_SETTINGS;
+        }
+    }
+
     public record CellDto(String id, BlockPos pos, List<String> itemIds) {
         static final StreamCodec<ByteBuf, CellDto> CODEC = StreamCodec.composite(
                 ByteBufCodecs.STRING_UTF8, CellDto::id,
@@ -236,6 +264,18 @@ public final class StorageGuideNetworking {
         @Override
         public Type<? extends CustomPacketPayload> type() {
             return MESSAGE;
+        }
+    }
+
+    public record OpenOperatorSettingsPayload(boolean sloppinessDetector) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, OpenOperatorSettingsPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, OpenOperatorSettingsPayload::sloppinessDetector,
+                OpenOperatorSettingsPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return OPEN_OPERATOR_SETTINGS;
         }
     }
 }

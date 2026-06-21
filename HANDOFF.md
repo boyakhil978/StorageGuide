@@ -43,6 +43,15 @@ Grid-cell editing uses direct ray intersections against configured cell bounds. 
 - Sloppiness validation now resolves item variants through their configured destination and correctly handles both halves of double chests.
 - The README now provides a marketable overview, Modrinth-first installation, detailed usage guidance, and a preference for safe in-game configuration.
 
+## Post-v2.0.1 Work
+
+- Added optional Mod Menu integration through the `modmenu` entrypoint and a compile-only dependency.
+- Added persistent client settings in `config/storageguide-client.json` for the located-chest highlight color, found-item hotbar color, missing-item hotbar color, and hotbar-status visibility.
+- Added an RGB slider color picker with live preview and default-color restoration.
+- Added a selected-hotbar-slot status border. It resolves normal items and shulker contents against the client's synchronized cell assignments.
+- Added an operator settings screen, accessible from the client settings screen or `/storageguide settings`.
+- Added capability-checked request, update, and open-screen payloads for operator settings. The menu currently manages the server's sloppiness-detector toggle.
+
 ## Important Files
 
 - `src/main/java/com/storageguide/StorageGuideServer.java`
@@ -52,7 +61,11 @@ Grid-cell editing uses direct ray intersections against configured cell bounds. 
 - `src/main/java/com/storageguide/StorageGuideCommands.java`
   - Operator command registration.
 - `src/main/java/com/storageguide/StorageGuideClient.java`
-  - Client controls, networking, highlights, and screens.
+  - Client controls, networking, highlights, HUD status border, and screens.
+- `src/main/java/com/storageguide/StorageGuideClientConfig.java`
+  - Persistent client colors and HUD preferences.
+- `src/main/java/com/storageguide/StorageGuideModMenu.java`
+  - Optional Mod Menu configuration-screen entrypoint.
 - `src/main/java/com/storageguide/mixin/AbstractContainerMenuMixin.java`
   - Captures chest contents before a click and runs the detector afterward.
 - `src/main/java/com/storageguide/mixin/CompoundContainerAccessor.java`
@@ -111,6 +124,10 @@ Recommended in-game checks:
 14. Test grid-cell editing with signs and item frames in front of chests.
 15. Test highlights with Iris/Photon enabled.
 16. Test a current client/server pair and legacy packet fallback with an older peer.
+17. Open StorageGuide through Mod Menu and test all RGB sliders, defaults, save, cancel, and config persistence.
+18. Confirm the selected hotbar border is green for configured items and red for unconfigured items.
+19. Test hotbar status for empty, compatible, and incompatible shulker boxes.
+20. Open `/storageguide settings` as an operator and verify the detector toggle saves; confirm non-operators cannot open or update it.
 
 ## Notes for the Next Maintainer
 

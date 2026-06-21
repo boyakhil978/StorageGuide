@@ -5,15 +5,22 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gizmos.GizmoStyle;
 import net.minecraft.gizmos.Gizmos;
@@ -22,7 +29,10 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.item.CreativeModeTabs;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -38,6 +48,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 
 public final class StorageGuideClient implements ClientModInitializer {
     private final KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(StorageGuideMod.MOD_ID, StorageGuideMod.MOD_ID));
@@ -49,6 +61,7 @@ public final class StorageGuideClient implements ClientModInitializer {
     private static boolean canEdit;
     private static boolean requestedInitialState;
     private static boolean sentClientHello;
+    private static StorageGuideClientConfig clientConfig;
     private static String serverVersion = "legacy or unavailable";
     private static int serverProtocolVersion = 1;
     private static List<StorageGuideNetworking.CellDto> cells = List.of();
@@ -59,6 +72,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        clientConfig = StorageGuideClientConfig.load();
         this.selectOrEditKey = registerKey("select_or_edit", GLFW.GLFW_KEY_LEFT_BRACKET);
         this.locateHeldKey = registerKey("locate_held_item", GLFW.GLFW_KEY_GRAVE_ACCENT);
         this.findMenuKey = registerKey("find_menu", GLFW.GLFW_KEY_O);
@@ -66,6 +80,11 @@ public final class StorageGuideClient implements ClientModInitializer {
         registerReceivers();
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
         LevelRenderEvents.AFTER_BLOCK_OUTLINE_EXTRACTION.register(this::extractHighlights);
+        HudElementRegistry.attachElementAfter(
+                VanillaHudElements.HOTBAR,
+                Identifier.fromNamespaceAndPath(StorageGuideMod.MOD_ID, "selected_item_status"),
+                this::extractSelectedItemStatus
+        );
     }
 
     private KeyMapping registerKey(String name, int defaultKey) {
@@ -103,6 +122,10 @@ public final class StorageGuideClient implements ClientModInitializer {
                     serverVersion = payload.version();
                     serverProtocolVersion = payload.protocolVersion();
                 }));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS, (payload, context) ->
+                context.client().execute(() -> context.client().setScreen(
+                        new OperatorSettingsScreen(context.client().screen, payload.sloppinessDetector())
+                )));
     }
 
     private void onClientTick(Minecraft client) {
@@ -313,7 +336,15 @@ public final class StorageGuideClient implements ClientModInitializer {
                     .ifPresent(pos -> renderStates.add(new HighlightState(pos, 0.1F, 1.0F, 0.35F, 0.28F, 0.9F)));
         }
         if (activeHighlight != null) {
-            renderStates.add(new HighlightState(activeHighlight, 1.0F, 0.82F, 0.1F, 0.3F, 1.0F));
+            int color = clientConfig.highlightColor();
+            renderStates.add(new HighlightState(
+                    activeHighlight,
+                    ((color >> 16) & 0xFF) / 255.0F,
+                    ((color >> 8) & 0xFF) / 255.0F,
+                    (color & 0xFF) / 255.0F,
+                    0.3F,
+                    1.0F
+            ));
         }
 
         for (HighlightState state : renderStates) {
@@ -328,6 +359,375 @@ public final class StorageGuideClient implements ClientModInitializer {
     }
 
     private record HighlightState(BlockPos pos, float r, float g, float b, float fillAlpha, float strokeAlpha) {
+    }
+
+    private void extractSelectedItemStatus(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker) {
+        Minecraft client = Minecraft.getInstance();
+        if (clientConfig == null
+                || !clientConfig.hotbarStatusEnabled()
+                || client.options.hideGui
+                || client.player == null
+                || client.gameMode == null
+                || client.player.isSpectator()) {
+            return;
+        }
+
+        ItemStack selected = client.player.getMainHandItem();
+        if (selected.isEmpty()) {
+            return;
+        }
+
+        int color = ARGB.opaque(itemHasConfiguredDestination(selected)
+                ? clientConfig.foundHotbarColor()
+                : clientConfig.missingHotbarColor());
+        int x = graphics.guiWidth() / 2 - 92 + client.player.getInventory().getSelectedSlot() * 20;
+        int y = graphics.guiHeight() - 23;
+        graphics.outline(x, y, 24, 23, color);
+        graphics.outline(x + 1, y + 1, 22, 21, ARGB.multiplyAlpha(color, 0.7F));
+    }
+
+    private static boolean itemHasConfiguredDestination(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        if (!isShulkerBox(stack)) {
+            return findCellIdForItem(stack).isPresent();
+        }
+
+        List<ItemStack> contents = shulkerContents(stack);
+        if (contents.isEmpty()) {
+            return findCellIdForItem(stack).isPresent();
+        }
+
+        String targetCell = null;
+        for (ItemStack contained : contents) {
+            Optional<String> cellId = findCellIdForItem(contained);
+            if (cellId.isEmpty()) {
+                return false;
+            }
+            if (targetCell == null) {
+                targetCell = cellId.get();
+            } else if (!targetCell.equals(cellId.get())) {
+                return false;
+            }
+        }
+        return targetCell != null;
+    }
+
+    private static Optional<String> findCellIdForItem(ItemStack stack) {
+        String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        return cells.stream()
+                .filter(cell -> cell.itemIds().contains(itemId))
+                .map(StorageGuideNetworking.CellDto::id)
+                .findFirst();
+    }
+
+    private static boolean isShulkerBox(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem blockItem
+                && blockItem.getBlock() instanceof ShulkerBoxBlock;
+    }
+
+    private static List<ItemStack> shulkerContents(ItemStack stack) {
+        ItemContainerContents contents = stack.getOrDefault(DataComponents.CONTAINER, ItemContainerContents.EMPTY);
+        return contents.nonEmptyItemCopyStream().toList();
+    }
+
+    public static Screen createConfigScreen(Screen parent) {
+        return new ClientSettingsScreen(parent);
+    }
+
+    private static final class ClientSettingsScreen extends Screen {
+        private final Screen parent;
+        private boolean hotbarStatusEnabled;
+        private int highlightColor;
+        private int foundHotbarColor;
+        private int missingHotbarColor;
+
+        private ClientSettingsScreen(Screen parent) {
+            super(Component.literal("StorageGuide Settings"));
+            this.parent = parent;
+            loadDraft();
+        }
+
+        private void loadDraft() {
+            if (clientConfig == null) {
+                clientConfig = StorageGuideClientConfig.load();
+            }
+            this.hotbarStatusEnabled = clientConfig.hotbarStatusEnabled();
+            this.highlightColor = clientConfig.highlightColor();
+            this.foundHotbarColor = clientConfig.foundHotbarColor();
+            this.missingHotbarColor = clientConfig.missingHotbarColor();
+        }
+
+        @Override
+        protected void init() {
+            int center = this.width / 2;
+            int top = Math.max(38, this.height / 2 - 104);
+
+            this.addRenderableWidget(CycleButton.onOffBuilder(this.hotbarStatusEnabled)
+                    .create(center - 100, top, 200, 20, Component.literal("Hotbar item status"),
+                            (button, enabled) -> this.hotbarStatusEnabled = enabled));
+
+            this.addRenderableWidget(colorButton(
+                    center,
+                    top + 28,
+                    "Located chest highlight",
+                    this.highlightColor,
+                    StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR,
+                    color -> this.highlightColor = color
+            ));
+            this.addRenderableWidget(colorButton(
+                    center,
+                    top + 56,
+                    "Found item hotbar",
+                    this.foundHotbarColor,
+                    StorageGuideClientConfig.DEFAULT_FOUND_HOTBAR_COLOR,
+                    color -> this.foundHotbarColor = color
+            ));
+            this.addRenderableWidget(colorButton(
+                    center,
+                    top + 84,
+                    "Missing item hotbar",
+                    this.missingHotbarColor,
+                    StorageGuideClientConfig.DEFAULT_MISSING_HOTBAR_COLOR,
+                    color -> this.missingHotbarColor = color
+            ));
+
+            if (canEdit) {
+                this.addRenderableWidget(Button.builder(Component.literal("Operator Settings"), button -> {
+                    if (canSend(StorageGuideNetworking.REQUEST_OPERATOR_SETTINGS)) {
+                        ClientPlayNetworking.send(new StorageGuideNetworking.RequestOperatorSettingsPayload());
+                    } else {
+                        message(Minecraft.getInstance(), "This server does not support the operator settings menu.");
+                    }
+                }).bounds(center - 100, top + 116, 200, 20).build());
+            }
+
+            int footerY = top + (canEdit ? 148 : 120);
+            this.addRenderableWidget(Button.builder(Component.literal("Reset"), button -> {
+                this.hotbarStatusEnabled = true;
+                this.highlightColor = StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR;
+                this.foundHotbarColor = StorageGuideClientConfig.DEFAULT_FOUND_HOTBAR_COLOR;
+                this.missingHotbarColor = StorageGuideClientConfig.DEFAULT_MISSING_HOTBAR_COLOR;
+                this.rebuildWidgets();
+            }).bounds(center - 100, footerY, 62, 20).build());
+            this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
+                    .bounds(center - 31, footerY, 62, 20).build());
+            this.addRenderableWidget(Button.builder(Component.literal("Save"), button -> {
+                clientConfig.update(
+                        this.hotbarStatusEnabled,
+                        this.highlightColor,
+                        this.foundHotbarColor,
+                        this.missingHotbarColor
+                );
+                this.onClose();
+            }).bounds(center + 38, footerY, 62, 20).build());
+        }
+
+        private Button colorButton(
+                int center,
+                int y,
+                String label,
+                int color,
+                int defaultColor,
+                Consumer<Integer> setter
+        ) {
+            return Button.builder(colorLabel(label, color), button ->
+                    this.minecraft.setScreen(new ColorPickerScreen(
+                            this,
+                            label,
+                            color,
+                            defaultColor,
+                            selected -> {
+                                setter.accept(selected);
+                                this.rebuildWidgets();
+                            }
+                    ))
+            ).bounds(center - 100, y, 200, 20).build();
+        }
+
+        @Override
+        public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            super.extractRenderState(graphics, mouseX, mouseY, delta);
+            graphics.centeredText(this.font, this.title, this.width / 2, 18, 0xFFFFFFFF);
+            graphics.centeredText(
+                    this.font,
+                    Component.literal("Colors are saved per client."),
+                    this.width / 2,
+                    29,
+                    0xFFAAAAAA
+            );
+        }
+
+        @Override
+        public void onClose() {
+            this.minecraft.setScreen(this.parent);
+        }
+    }
+
+    private static final class ColorPickerScreen extends Screen {
+        private final Screen parent;
+        private final String label;
+        private final int defaultColor;
+        private final Consumer<Integer> onSave;
+        private int color;
+
+        private ColorPickerScreen(Screen parent, String label, int color, int defaultColor, Consumer<Integer> onSave) {
+            super(Component.literal(label + " Color"));
+            this.parent = parent;
+            this.label = label;
+            this.color = color & 0xFFFFFF;
+            this.defaultColor = defaultColor & 0xFFFFFF;
+            this.onSave = onSave;
+        }
+
+        @Override
+        protected void init() {
+            int center = this.width / 2;
+            int top = Math.max(48, this.height / 2 - 88);
+
+            this.addRenderableWidget(new ColorSlider(
+                    center - 100, top, 200, "Red", red(this.color),
+                    value -> this.color = (this.color & 0x00FFFF) | (value << 16)
+            ));
+            this.addRenderableWidget(new ColorSlider(
+                    center - 100, top + 28, 200, "Green", green(this.color),
+                    value -> this.color = (this.color & 0xFF00FF) | (value << 8)
+            ));
+            this.addRenderableWidget(new ColorSlider(
+                    center - 100, top + 56, 200, "Blue", blue(this.color),
+                    value -> this.color = (this.color & 0xFFFF00) | value
+            ));
+
+            this.addRenderableWidget(Button.builder(Component.literal("Default"), button -> {
+                this.color = this.defaultColor;
+                this.rebuildWidgets();
+            }).bounds(center - 100, top + 126, 62, 20).build());
+            this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
+                    .bounds(center - 31, top + 126, 62, 20).build());
+            this.addRenderableWidget(Button.builder(Component.literal("Apply"), button -> {
+                this.onSave.accept(this.color);
+                this.onClose();
+            }).bounds(center + 38, top + 126, 62, 20).build());
+        }
+
+        @Override
+        public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            super.extractRenderState(graphics, mouseX, mouseY, delta);
+            int center = this.width / 2;
+            int top = Math.max(48, this.height / 2 - 88);
+            graphics.centeredText(this.font, Component.literal(this.label), center, 22, 0xFFFFFFFF);
+            graphics.fill(center - 100, top + 92, center + 100, top + 116, ARGB.opaque(this.color));
+            graphics.outline(center - 100, top + 92, 200, 24, 0xFFFFFFFF);
+            graphics.centeredText(this.font, Component.literal(hexColor(this.color)), center, top + 100, contrastText(this.color));
+        }
+
+        @Override
+        public void onClose() {
+            this.minecraft.setScreen(this.parent);
+        }
+    }
+
+    private static final class ColorSlider extends AbstractSliderButton {
+        private final String label;
+        private final IntConsumer setter;
+
+        private ColorSlider(int x, int y, int width, String label, int channel, IntConsumer setter) {
+            super(x, y, width, 20, Component.empty(), channel / 255.0);
+            this.label = label;
+            this.setter = setter;
+            updateMessage();
+        }
+
+        @Override
+        protected void updateMessage() {
+            this.setMessage(Component.literal(this.label + ": " + channel()));
+        }
+
+        @Override
+        protected void applyValue() {
+            this.setter.accept(channel());
+            updateMessage();
+        }
+
+        private int channel() {
+            return Math.clamp((int) Math.round(this.value * 255.0), 0, 255);
+        }
+    }
+
+    private static final class OperatorSettingsScreen extends Screen {
+        private final Screen parent;
+        private boolean sloppinessDetector;
+
+        private OperatorSettingsScreen(Screen parent, boolean sloppinessDetector) {
+            super(Component.literal("StorageGuide Operator Settings"));
+            this.parent = parent;
+            this.sloppinessDetector = sloppinessDetector;
+        }
+
+        @Override
+        protected void init() {
+            int center = this.width / 2;
+            int top = Math.max(56, this.height / 2 - 48);
+            this.addRenderableWidget(CycleButton.onOffBuilder(this.sloppinessDetector)
+                    .create(center - 100, top, 200, 20, Component.literal("Sloppiness detector"),
+                            (button, enabled) -> this.sloppinessDetector = enabled));
+            this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
+                    .bounds(center - 100, top + 48, 96, 20).build());
+            this.addRenderableWidget(Button.builder(Component.literal("Save"), button -> {
+                if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS)) {
+                    ClientPlayNetworking.send(new StorageGuideNetworking.UpdateOperatorSettingsPayload(
+                            this.sloppinessDetector
+                    ));
+                    this.onClose();
+                } else {
+                    message(Minecraft.getInstance(), "This server does not support operator setting updates.");
+                }
+            }).bounds(center + 4, top + 48, 96, 20).build());
+        }
+
+        @Override
+        public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            super.extractRenderState(graphics, mouseX, mouseY, delta);
+            graphics.centeredText(this.font, this.title, this.width / 2, 24, 0xFFFFFFFF);
+            graphics.centeredText(
+                    this.font,
+                    Component.literal("These settings are stored on the server."),
+                    this.width / 2,
+                    37,
+                    0xFFAAAAAA
+            );
+        }
+
+        @Override
+        public void onClose() {
+            this.minecraft.setScreen(this.parent);
+        }
+    }
+
+    private static Component colorLabel(String label, int color) {
+        return Component.literal(label + ": " + hexColor(color));
+    }
+
+    private static String hexColor(int color) {
+        return String.format(Locale.ROOT, "#%06X", color & 0xFFFFFF);
+    }
+
+    private static int red(int color) {
+        return (color >> 16) & 0xFF;
+    }
+
+    private static int green(int color) {
+        return (color >> 8) & 0xFF;
+    }
+
+    private static int blue(int color) {
+        return color & 0xFF;
+    }
+
+    private static int contrastText(int color) {
+        int luminance = red(color) * 299 + green(color) * 587 + blue(color) * 114;
+        return luminance >= 128_000 ? 0xFF000000 : 0xFFFFFFFF;
     }
 
     private static final class CellEditorScreen extends Screen {

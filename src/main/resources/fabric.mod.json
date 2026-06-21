@@ -17,6 +17,9 @@
     ],
     "client": [
       "com.storageguide.StorageGuideClient"
+    ],
+    "modmenu": [
+      "com.storageguide.StorageGuideModMenu"
     ]
   },
   "mixins": [
@@ -27,5 +30,8 @@
     "minecraft": ">=26.1",
     "java": ">=25",
     "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": ">=18.0.0-beta.1"
   }
 }

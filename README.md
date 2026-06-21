@@ -13,7 +13,8 @@ Operators configure the room through a simple in-game editor, and every player u
 - **Pack shulkers intelligently:** Route full shulker boxes by their contents, with support for every color.
 - **Spot misplaced items:** An optional sloppiness detector warns when something enters the wrong chest.
 - **Keep your shaders:** Clear in-world highlights work with Iris shaders, including Photon.
-- **Configure everything in-game:** Create the grid and assign multiple item types to each chest without editing files.
+- **Personalize the interface:** Choose highlight and hotbar-status colors through Mod Menu.
+- **Configure everything in-game:** Create the grid, assign items, and manage operator settings without editing files.
 - **Run one jar everywhere:** Use the same Fabric mod on dedicated servers, LAN hosts, and clients.
 - **Upgrade more safely:** Version-aware networking can fall back to older supported packet formats.
 
@@ -23,6 +24,7 @@ Operators configure the room through a simple in-game editor, and every player u
 - Fabric Loader `0.19.2` or newer
 - Fabric API `0.152.1+26.1.2` or a compatible newer build
 - Java `25` or newer
+- [Mod Menu](https://modrinth.com/mod/modmenu) `18.0.0-beta.1` or newer (optional, recommended for client settings)
 
 ## Installation
 
@@ -57,7 +59,7 @@ Installing StorageGuide on both sides enables its menus, keybinds, highlights, s
 | `O` | Open the item finder |
 | `~` | Locate the held item |
 
-The locate key is the grave-accent key below Escape on most keyboards; holding Shift produces `~`. Every keybind can be changed under Minecraft's Controls menu.
+Every keybind can be changed under Minecraft's Controls menu.
 
 ## Creating the Storage Grid
 
@@ -91,6 +93,14 @@ Press `O` to open a blank search field. Results appear as you type and use clean
 To skip the menu, hold an item in either hand and press the `~` key. The main hand takes priority when both hands contain an item.
 
 If no chest is assigned to the item, StorageGuide clears any previous result and reports that no matching cell exists.
+
+The selected hotbar slot also provides an at-a-glance status:
+
+- Green means the selected item has a configured storage destination.
+- Red means the selected item is not assigned to a chest.
+- Non-empty shulker boxes are green only when all their contents belong to one configured chest.
+
+Both colors, the located-chest highlight color, and the hotbar indicator itself can be changed from StorageGuide's Mod Menu configuration screen.
 
 ## Shulker Boxes
 
@@ -141,7 +151,21 @@ For complete functionality, keep the server and clients on the same StorageGuide
 
 ## Configuration and Backups
 
-Whenever possible, configure StorageGuide in-game. Use `[` to create the storage grid and assign items, and use the `/storageguide sloppiness_detector` commands to manage misplaced-item detection. The in-game tools validate changes and keep assignments consistent automatically.
+Whenever possible, configure StorageGuide in-game:
+
+- Open **Mod Menu → StorageGuide → Configure** to change the located-chest highlight, found-item hotbar color, missing-item hotbar color, or disable the hotbar indicator.
+- Operators can select **Operator Settings** from that screen while connected to a server.
+- Operators can also run `/storageguide settings` to open the server settings menu directly.
+- Use `[` to create the storage grid and assign items.
+- The `/storageguide sloppiness_detector` commands remain available for command-based management.
+
+The in-game tools validate changes and keep assignments consistent automatically.
+
+Client colors are saved to:
+
+```text
+config/storageguide-client.json
+```
 
 The server stores this configuration at:
 
@@ -154,7 +178,9 @@ The file contains the grid bounds, cell assignments, and sloppiness-detector set
 ## Troubleshooting
 
 - **The controls do nothing:** Confirm StorageGuide and Fabric API are installed on both the client and server. Also ensure no other control is bound to the same key in the game settings.
+- **StorageGuide has no Configure button:** Install Mod Menu on the client. It is optional and is not required on the server.
 - **A player cannot edit the grid:** Grid creation and assignment editing require operator permissions.
+- **Operator Settings is missing:** Join the server with operator permissions first, or run `/storageguide settings`.
 - **No search result appears:** Only assigned items can produce a chest highlight.
 - **A shulker is rejected:** Its non-empty contents must all be assigned to one storage cell.
 - **A highlight is hidden by a shader:** Verify the client is running the current release. Photon compatibility uses the mod's dedicated highlight renderer.

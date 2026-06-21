@@ -14,6 +14,8 @@ public final class StorageGuideCommands {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
                 Commands.literal("storageguide")
                         .requires(Commands.hasPermission(Commands.LEVEL_ADMINS))
+                        .then(Commands.literal("settings")
+                                .executes(context -> openSettings(context.getSource())))
                         .then(sloppinessDetector())
         ));
     }
@@ -35,5 +37,15 @@ public final class StorageGuideCommands {
         StorageGuideServer.setSloppinessDetector(enabled);
         source.sendSuccess(() -> Component.literal("StorageGuide sloppiness detector turned " + (enabled ? "on." : "off.")), true);
         return enabled ? 1 : 0;
+    }
+
+    private static int openSettings(CommandSourceStack source) {
+        if (!source.isPlayer()) {
+            source.sendFailure(Component.literal("StorageGuide settings can only be opened by a player."));
+            return 0;
+        }
+
+        StorageGuideServer.openOperatorSettings(source.getPlayer());
+        return 1;
     }
 }
