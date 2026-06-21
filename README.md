@@ -88,7 +88,7 @@ Leaving the world, opening the pause menu, or pressing Escape cancels the active
 
 Press `O` to open a blank search field. Results appear as you type and use clean item names without the `minecraft:` namespace. Select a result to close the menu and highlight its assigned chest.
 
-To skip the menu, hold an item in either hand and press the grave-accent/`~` key. The main hand takes priority when both hands contain an item.
+To skip the menu, hold an item in either hand and press the `~` key. The main hand takes priority when both hands contain an item.
 
 If no chest is assigned to the item, StorageGuide clears any previous result and reports that no matching cell exists.
 
