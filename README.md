@@ -55,7 +55,7 @@ Installing StorageGuide on both sides enables its menus, keybinds, highlights, s
 | --- | --- |
 | `[` | Select the storage grid or edit a grid cell |
 | `O` | Open the item finder |
-| `~` / grave accent | Locate the held item |
+| `~` | Locate the held item |
 
 The locate key is the grave-accent key below Escape on most keyboards; holding Shift produces `~`. Every keybind can be changed under Minecraft's Controls menu.
 
