@@ -267,9 +267,15 @@ public final class StorageGuideNetworking {
         }
     }
 
-    public record OpenOperatorSettingsPayload(boolean sloppinessDetector) implements CustomPacketPayload {
+    public record OpenOperatorSettingsPayload(
+            boolean canEdit,
+            boolean sloppinessDetector,
+            String statusMessage
+    ) implements CustomPacketPayload {
         static final StreamCodec<RegistryFriendlyByteBuf, OpenOperatorSettingsPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, OpenOperatorSettingsPayload::canEdit,
                 ByteBufCodecs.BOOL, OpenOperatorSettingsPayload::sloppinessDetector,
+                ByteBufCodecs.STRING_UTF8, OpenOperatorSettingsPayload::statusMessage,
                 OpenOperatorSettingsPayload::new
         );
 

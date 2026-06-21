@@ -6,6 +6,9 @@
     "AbstractContainerMenuMixin",
     "CompoundContainerAccessor"
   ],
+  "client": [
+    "GuiMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

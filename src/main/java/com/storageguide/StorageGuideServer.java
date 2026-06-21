@@ -259,29 +259,37 @@ public final class StorageGuideServer {
     }
 
     public static void openOperatorSettings(ServerPlayer player) {
-        if (!canEdit(player)) {
-            message(player, "StorageGuide settings require operator permission.");
-            return;
-        }
         if (!ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS)) {
             message(player, "Your StorageGuide client does not support the operator settings menu.");
             return;
         }
 
         ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsPayload(
-                config.sloppinessDetector()
+                canEdit(player),
+                config.sloppinessDetector(),
+                canEdit(player) ? "" : "Operator permission is required to change server settings."
         ));
     }
 
     private static void updateOperatorSettings(ServerPlayer player, boolean sloppinessDetector) {
         if (!canEdit(player)) {
-            message(player, "StorageGuide settings require operator permission.");
+            sendOperatorSettings(player, false, "Operator permission is required to change server settings.");
             return;
         }
 
         config.setSloppinessDetector(sloppinessDetector);
         save();
-        message(player, "StorageGuide operator settings saved.");
+        sendOperatorSettings(player, true, "Operator settings saved.");
+    }
+
+    private static void sendOperatorSettings(ServerPlayer player, boolean canEdit, String statusMessage) {
+        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS)) {
+            ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsPayload(
+                    canEdit,
+                    config.sloppinessDetector(),
+                    statusMessage
+            ));
+        }
     }
 
     private static void sendState(ServerPlayer player) {

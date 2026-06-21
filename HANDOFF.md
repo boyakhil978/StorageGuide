@@ -6,9 +6,10 @@ Last updated: June 21, 2026
 
 - Branch: `main`
 - Remote: `https://github.com/boyakhil978/StorageGuide.git`
-- Release version: `2.0.1`
-- Stable release tag: `v2.0.1`
-- `./gradlew build` passes.
+- Project version: `2.2.0`
+- Latest stable release: `2.2.0`
+- Stable release tag: `v2.2.0`
+- `./gradlew clean build` passes.
 - Fabric metadata must identify the author as `Akhil Boyapati`.
 - The in-game mod icon is `assets/storageguide/icon.png`, a 512×512 PNG packaged inside the jar.
 
@@ -36,21 +37,32 @@ Grid-cell editing uses direct ray intersections against configured cell bounds. 
 
 ## v2.0.1 Work
 
-- The held-item locator now defaults to the grave-accent/tilde key instead of `P`.
+- The held-item locator now defaults to `~` instead of `P`.
 - Finder and cell-editor item choices are sourced from ordinary creative tabs, excluding operator-only technical entries.
 - Routine synchronization and debug chat messages have been removed.
 - Sloppiness detection compares container contents before and after each click, so removals and pre-existing misplaced items do not produce false positives.
 - Sloppiness validation now resolves item variants through their configured destination and correctly handles both halves of double chests.
 - The README now provides a marketable overview, Modrinth-first installation, detailed usage guidance, and a preference for safe in-game configuration.
 
-## Post-v2.0.1 Work
+## v2.2.0 Work
 
 - Added optional Mod Menu integration through the `modmenu` entrypoint and a compile-only dependency.
+- Mod Menu `18.0.0-beta.1+` is suggested, not required. It belongs on clients that want the configuration button and is not required on dedicated servers.
 - Added persistent client settings in `config/storageguide-client.json` for the located-chest highlight color, found-item hotbar color, missing-item hotbar color, and hotbar-status visibility.
 - Added an RGB slider color picker with live preview and default-color restoration.
-- Added a selected-hotbar-slot status border. It resolves normal items and shulker contents against the client's synchronized cell assignments.
+- Added a temporary selected-hotbar-slot status tint. Pressing `~` recolors the original vanilla selected-slot texture for 2.5 seconds, blends it back to white during the final 600 ms, and then leaves vanilla rendering unchanged.
 - Added an operator settings screen, accessible from the client settings screen or `/storageguide settings`.
 - Added capability-checked request, update, and open-screen payloads for operator settings. The menu currently manages the server's sloppiness-detector toggle.
+
+Default client colors:
+
+- Located chest: `#FFD11A`
+- Item has a destination: `#55FF55`
+- Item has no destination: `#FF5555`
+
+The hotbar status is only activated by held-item lookup, not continuously. Switching slots cancels it. It is disabled for an empty selected slot, hidden HUD, or spectator mode. For a non-empty shulker, it shows the success color only when every contained item resolves to the same configured cell. An empty shulker is checked by its exact shulker item/color assignment. `GuiMixin` redirects the vanilla selector draw through the API's tint overload, preserving the original texture shape.
+
+The operator settings screen is intentionally server-authoritative. All new payloads are guarded with `canSend` checks. Non-operators can open the menu in read-only mode and receive the permission explanation inside the screen rather than in chat. Save confirmations and rejected updates also return as menu state. At present, the screen only controls the existing sloppiness-detector toggle. Force-client enforcement and a configurable cooldown are still pending.
 
 ## Important Files
 
@@ -59,7 +71,7 @@ Grid-cell editing uses direct ray intersections against configured cell bounds. 
 - `src/main/java/com/storageguide/StorageGuideConfig.java`
   - Persistent server configuration and storage-cell model.
 - `src/main/java/com/storageguide/StorageGuideCommands.java`
-  - Operator command registration.
+  - Operator command registration, including `/storageguide settings`.
 - `src/main/java/com/storageguide/StorageGuideClient.java`
   - Client controls, networking, highlights, HUD status border, and screens.
 - `src/main/java/com/storageguide/StorageGuideClientConfig.java`
@@ -70,10 +82,14 @@ Grid-cell editing uses direct ray intersections against configured cell bounds. 
   - Captures chest contents before a click and runs the detector afterward.
 - `src/main/java/com/storageguide/mixin/CompoundContainerAccessor.java`
   - Exposes both containers in a double chest.
+- `src/main/java/com/storageguide/mixin/GuiMixin.java`
+  - Tints the original vanilla selected-slot sprite while the temporary lookup status is active.
 - `src/main/resources/storageguide.mixins.json`
   - Mixin registration.
 - `src/main/resources/fabric.mod.json`
-  - Mod metadata, entry points, dependencies, and mixin declaration.
+  - Mod metadata, entry points, dependencies, optional Mod Menu suggestion, and mixin declaration.
+- `build.gradle`
+  - Includes the TerraformersMC Maven repository and compile-only Mod Menu API.
 
 ## Build and Verification
 
@@ -83,6 +99,7 @@ Requirements:
 - Minecraft `26.1.2+`
 - Fabric Loader `0.19.2+`
 - Fabric API `0.152.1+26.1.2`
+- Mod Menu `18.0.0-beta.1+` for optional client configuration integration
 
 Build with:
 
@@ -125,12 +142,32 @@ Recommended in-game checks:
 15. Test highlights with Iris/Photon enabled.
 16. Test a current client/server pair and legacy packet fallback with an older peer.
 17. Open StorageGuide through Mod Menu and test all RGB sliders, defaults, save, cancel, and config persistence.
-18. Confirm the selected hotbar border is green for configured items and red for unconfigured items.
-19. Test hotbar status for empty, compatible, and incompatible shulker boxes.
-20. Open `/storageguide settings` as an operator and verify the detector toggle saves; confirm non-operators cannot open or update it.
+18. Press `~` and confirm the selected frame temporarily becomes green for configured items and red for unconfigured items, then fades back to the vanilla texture.
+19. Confirm switching hotbar slots immediately cancels the status; test empty, compatible, and incompatible shulker boxes.
+20. Open operator settings as an operator and verify the detector toggle saves. Open it as a non-operator and confirm the read-only permission message appears inside the menu with no StorageGuide chat warning.
+
+## Remaining TODO Direction
+
+`TODO.md` was intentionally not edited when the first four entries were implemented, so it still lists work that is already present. Use the implementation and this handoff as the source of truth.
+
+Completed locally:
+
+- Mod Menu client settings screen.
+- Configurable highlight color with RGB picker.
+- Configurable found/missing hotbar colors and selected-slot status.
+- Operator settings menu with sloppiness-detector control.
+
+Still pending:
+
+- Add force-client-mod enforcement to operator settings.
+- Make the sloppiness cooldown operator-configurable.
+- Allow individual cells/chests to be excluded from sloppiness detection.
+- Track all sloppiness instances and provide the public per-player history menu.
+- Support multiple rectangular grids, separate creation/editing controls, and add confirmation/onboarding for new configurations.
 
 ## Notes for the Next Maintainer
 
-- `mod_version` is `2.0.1` in `gradle.properties`.
+- `mod_version` is `2.2.0` in `gradle.properties`.
+- Do not move or overwrite existing stable tags.
 - Never change the codec of an existing payload ID. Add a new payload ID and negotiate support.
 - Before a future release, choose the next version, update release-facing documentation, rebuild, inspect the jar metadata/icon, and perform the in-game checks above.

@@ -94,13 +94,13 @@ To skip the menu, hold an item in either hand and press the `~` key. The main ha
 
 If no chest is assigned to the item, StorageGuide clears any previous result and reports that no matching cell exists.
 
-The selected hotbar slot also provides an at-a-glance status:
+Pressing `~` briefly changes the selected hotbar frame to show the lookup status:
 
 - Green means the selected item has a configured storage destination.
 - Red means the selected item is not assigned to a chest.
 - Non-empty shulker boxes are green only when all their contents belong to one configured chest.
 
-Both colors, the located-chest highlight color, and the hotbar indicator itself can be changed from StorageGuide's Mod Menu configuration screen.
+The status briefly recolors the original Minecraft selected-slot texture, blends it back to normal after a short delay, and is cancelled immediately if you switch slots. Both status colors, the located-chest highlight color, and the indicator itself can be changed from StorageGuide's Mod Menu configuration screen.
 
 ## Shulker Boxes
 
@@ -181,6 +181,7 @@ The file contains the grid bounds, cell assignments, and sloppiness-detector set
 - **StorageGuide has no Configure button:** Install Mod Menu on the client. It is optional and is not required on the server.
 - **A player cannot edit the grid:** Grid creation and assignment editing require operator permissions.
 - **Operator Settings is missing:** Join the server with operator permissions first, or run `/storageguide settings`.
+- **Operator Settings says permission is required:** The menu remains viewable, but server settings can only be changed by an operator.
 - **No search result appears:** Only assigned items can produce a chest highlight.
 - **A shulker is rejected:** Its non-empty contents must all be assigned to one storage cell.
 - **A highlight is hidden by a shader:** Verify the client is running the current release. Photon compatibility uses the mod's dedicated highlight renderer.
@@ -197,7 +198,7 @@ The distributable jar is written to `build/libs/storageguide-<version>.jar`.
 
 ## Releases, Source, and License
 
-- Current stable release: `v2.0.1`
+- Current stable release: `v2.2.0`
 - Download: https://modrinth.com/mod/storageguide
 - Stable tags: `vX.Y.Z`
 - Beta tags: `vX.Y.Z-beta.N`

@@ -5,11 +5,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -69,6 +66,11 @@ public final class StorageGuideClient implements ClientModInitializer {
     private static BlockPos firstSelectionCorner;
     private static BlockPos activeHighlight;
     private static long activeHighlightUntilMs;
+    private static long hotbarStatusUntilMs;
+    private static int hotbarStatusColor;
+    private static int hotbarStatusSlot = -1;
+    private static final long HOTBAR_STATUS_DURATION_MS = 2_500L;
+    private static final long HOTBAR_STATUS_FADE_MS = 600L;
 
     @Override
     public void onInitializeClient() {
@@ -80,11 +82,6 @@ public final class StorageGuideClient implements ClientModInitializer {
         registerReceivers();
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
         LevelRenderEvents.AFTER_BLOCK_OUTLINE_EXTRACTION.register(this::extractHighlights);
-        HudElementRegistry.attachElementAfter(
-                VanillaHudElements.HOTBAR,
-                Identifier.fromNamespaceAndPath(StorageGuideMod.MOD_ID, "selected_item_status"),
-                this::extractSelectedItemStatus
-        );
     }
 
     private KeyMapping registerKey(String name, int defaultKey) {
@@ -123,9 +120,16 @@ public final class StorageGuideClient implements ClientModInitializer {
                     serverProtocolVersion = payload.protocolVersion();
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS, (payload, context) ->
-                context.client().execute(() -> context.client().setScreen(
-                        new OperatorSettingsScreen(context.client().screen, payload.sloppinessDetector())
-                )));
+                context.client().execute(() -> {
+                    Screen current = context.client().screen;
+                    Screen parent = current instanceof OperatorSettingsScreen settings ? settings.parent : current;
+                    context.client().setScreen(new OperatorSettingsScreen(
+                            parent,
+                            payload.canEdit(),
+                            payload.sloppinessDetector(),
+                            payload.statusMessage()
+                    ));
+                }));
     }
 
     private void onClientTick(Minecraft client) {
@@ -159,7 +163,10 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         while (this.locateHeldKey.consumeClick()) {
             heldItemId(client).ifPresentOrElse(
-                    itemId -> locateHeldItem(client, itemId),
+                    itemId -> {
+                        showHotbarStatus(client);
+                        locateHeldItem(client, itemId);
+                    },
                     () -> message(client, "Hold an item to locate it.")
             );
         }
@@ -315,6 +322,7 @@ public final class StorageGuideClient implements ClientModInitializer {
         cells = List.of();
         clearEditState();
         activeHighlight = null;
+        clearHotbarStatus();
     }
 
     private static void clearEditState() {
@@ -361,29 +369,60 @@ public final class StorageGuideClient implements ClientModInitializer {
     private record HighlightState(BlockPos pos, float r, float g, float b, float fillAlpha, float strokeAlpha) {
     }
 
-    private void extractSelectedItemStatus(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker) {
-        Minecraft client = Minecraft.getInstance();
+    private static void showHotbarStatus(Minecraft client) {
+        if (clientConfig == null
+                || !clientConfig.hotbarStatusEnabled()
+                || client.player == null
+                || client.player.getMainHandItem().isEmpty()) {
+            clearHotbarStatus();
+            return;
+        }
+
+        hotbarStatusColor = itemHasConfiguredDestination(client.player.getMainHandItem())
+                ? clientConfig.foundHotbarColor()
+                : clientConfig.missingHotbarColor();
+        hotbarStatusSlot = client.player.getInventory().getSelectedSlot();
+        hotbarStatusUntilMs = System.currentTimeMillis() + HOTBAR_STATUS_DURATION_MS;
+    }
+
+    public static int hotbarSelectionTint() {
+        if (!hotbarStatusActive(Minecraft.getInstance())) {
+            return 0xFFFFFFFF;
+        }
+
+        long remaining = hotbarStatusUntilMs - System.currentTimeMillis();
+        int subtleStatusColor = ARGB.srgbLerp(
+                0.72F,
+                0xFFFFFFFF,
+                ARGB.opaque(hotbarStatusColor)
+        );
+        if (remaining >= HOTBAR_STATUS_FADE_MS) {
+            return subtleStatusColor;
+        }
+
+        float restoreProgress = 1.0F - Math.max(0.0F, remaining / (float) HOTBAR_STATUS_FADE_MS);
+        return ARGB.srgbLerp(restoreProgress, subtleStatusColor, 0xFFFFFFFF);
+    }
+
+    private static boolean hotbarStatusActive(Minecraft client) {
         if (clientConfig == null
                 || !clientConfig.hotbarStatusEnabled()
                 || client.options.hideGui
                 || client.player == null
                 || client.gameMode == null
-                || client.player.isSpectator()) {
-            return;
+                || client.player.isSpectator()
+                || client.player.getInventory().getSelectedSlot() != hotbarStatusSlot
+                || client.player.getMainHandItem().isEmpty()
+                || System.currentTimeMillis() >= hotbarStatusUntilMs) {
+            clearHotbarStatus();
+            return false;
         }
+        return true;
+    }
 
-        ItemStack selected = client.player.getMainHandItem();
-        if (selected.isEmpty()) {
-            return;
-        }
-
-        int color = ARGB.opaque(itemHasConfiguredDestination(selected)
-                ? clientConfig.foundHotbarColor()
-                : clientConfig.missingHotbarColor());
-        int x = graphics.guiWidth() / 2 - 92 + client.player.getInventory().getSelectedSlot() * 20;
-        int y = graphics.guiHeight() - 23;
-        graphics.outline(x, y, 24, 23, color);
-        graphics.outline(x + 1, y + 1, 22, 21, ARGB.multiplyAlpha(color, 0.7F));
+    private static void clearHotbarStatus() {
+        hotbarStatusUntilMs = 0L;
+        hotbarStatusSlot = -1;
     }
 
     private static boolean itemHasConfiguredDestination(ItemStack stack) {
@@ -442,6 +481,7 @@ public final class StorageGuideClient implements ClientModInitializer {
         private int highlightColor;
         private int foundHotbarColor;
         private int missingHotbarColor;
+        private String operatorStatusMessage = "";
 
         private ClientSettingsScreen(Screen parent) {
             super(Component.literal("StorageGuide Settings"));
@@ -493,17 +533,18 @@ public final class StorageGuideClient implements ClientModInitializer {
                     color -> this.missingHotbarColor = color
             ));
 
-            if (canEdit) {
-                this.addRenderableWidget(Button.builder(Component.literal("Operator Settings"), button -> {
-                    if (canSend(StorageGuideNetworking.REQUEST_OPERATOR_SETTINGS)) {
-                        ClientPlayNetworking.send(new StorageGuideNetworking.RequestOperatorSettingsPayload());
-                    } else {
-                        message(Minecraft.getInstance(), "This server does not support the operator settings menu.");
-                    }
-                }).bounds(center - 100, top + 116, 200, 20).build());
-            }
+            this.addRenderableWidget(Button.builder(Component.literal("Operator Settings"), button -> {
+                if (canSend(StorageGuideNetworking.REQUEST_OPERATOR_SETTINGS)) {
+                    this.operatorStatusMessage = canEdit
+                            ? "Loading operator settings..."
+                            : "Checking operator permission...";
+                    ClientPlayNetworking.send(new StorageGuideNetworking.RequestOperatorSettingsPayload());
+                } else {
+                    this.operatorStatusMessage = "This server does not support the operator settings menu.";
+                }
+            }).bounds(center - 100, top + 116, 200, 20).build());
 
-            int footerY = top + (canEdit ? 148 : 120);
+            int footerY = top + 158;
             this.addRenderableWidget(Button.builder(Component.literal("Reset"), button -> {
                 this.hotbarStatusEnabled = true;
                 this.highlightColor = StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR;
@@ -557,6 +598,15 @@ public final class StorageGuideClient implements ClientModInitializer {
                     29,
                     0xFFAAAAAA
             );
+            if (!this.operatorStatusMessage.isBlank()) {
+                graphics.centeredText(
+                        this.font,
+                        Component.literal(this.operatorStatusMessage),
+                        this.width / 2,
+                        Math.max(38, this.height / 2 - 104) + 141,
+                        0xFFFFAA55
+                );
+            }
         }
 
         @Override
@@ -657,33 +707,44 @@ public final class StorageGuideClient implements ClientModInitializer {
 
     private static final class OperatorSettingsScreen extends Screen {
         private final Screen parent;
+        private final boolean canEditSettings;
+        private final String statusMessage;
         private boolean sloppinessDetector;
 
-        private OperatorSettingsScreen(Screen parent, boolean sloppinessDetector) {
+        private OperatorSettingsScreen(
+                Screen parent,
+                boolean canEditSettings,
+                boolean sloppinessDetector,
+                String statusMessage
+        ) {
             super(Component.literal("StorageGuide Operator Settings"));
             this.parent = parent;
+            this.canEditSettings = canEditSettings;
             this.sloppinessDetector = sloppinessDetector;
+            this.statusMessage = statusMessage == null ? "" : statusMessage;
         }
 
         @Override
         protected void init() {
             int center = this.width / 2;
             int top = Math.max(56, this.height / 2 - 48);
-            this.addRenderableWidget(CycleButton.onOffBuilder(this.sloppinessDetector)
+            CycleButton<Boolean> detectorButton = CycleButton.onOffBuilder(this.sloppinessDetector)
                     .create(center - 100, top, 200, 20, Component.literal("Sloppiness detector"),
-                            (button, enabled) -> this.sloppinessDetector = enabled));
-            this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
-                    .bounds(center - 100, top + 48, 96, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Save"), button -> {
+                            (button, enabled) -> this.sloppinessDetector = enabled);
+            detectorButton.active = this.canEditSettings;
+            this.addRenderableWidget(detectorButton);
+            this.addRenderableWidget(Button.builder(Component.literal("Back"), button -> this.onClose())
+                    .bounds(center - 100, top + 58, 96, 20).build());
+            Button saveButton = Button.builder(Component.literal("Save"), button -> {
                 if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS)) {
                     ClientPlayNetworking.send(new StorageGuideNetworking.UpdateOperatorSettingsPayload(
                             this.sloppinessDetector
                     ));
-                    this.onClose();
-                } else {
-                    message(Minecraft.getInstance(), "This server does not support operator setting updates.");
                 }
-            }).bounds(center + 4, top + 48, 96, 20).build());
+            }).bounds(center + 4, top + 58, 96, 20).build();
+            saveButton.active = this.canEditSettings
+                    && canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS);
+            this.addRenderableWidget(saveButton);
         }
 
         @Override
@@ -692,11 +753,22 @@ public final class StorageGuideClient implements ClientModInitializer {
             graphics.centeredText(this.font, this.title, this.width / 2, 24, 0xFFFFFFFF);
             graphics.centeredText(
                     this.font,
-                    Component.literal("These settings are stored on the server."),
+                    Component.literal(this.canEditSettings
+                            ? "These settings are stored on the server."
+                            : "You can view these settings, but only operators can change them."),
                     this.width / 2,
                     37,
                     0xFFAAAAAA
             );
+            if (!this.statusMessage.isBlank()) {
+                graphics.centeredText(
+                        this.font,
+                        Component.literal(this.statusMessage),
+                        this.width / 2,
+                        Math.max(56, this.height / 2 - 48) + 30,
+                        this.canEditSettings ? 0xFF55FF55 : 0xFFFFAA55
+                );
+            }
         }
 
         @Override
