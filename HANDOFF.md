@@ -6,8 +6,8 @@ Last updated: June 21, 2026
 
 - Branch: `main`
 - Remote: `https://github.com/boyakhil978/StorageGuide.git`
-- Release version: `2.0.0`
-- Stable release tag: `v2.0.0`
+- Release version: `2.0.1`
+- Stable release tag: `v2.0.1`
 - `./gradlew build` passes.
 - Fabric metadata must identify the author as `Akhil Boyapati`.
 - The in-game mod icon is `assets/storageguide/icon.png`, a 512×512 PNG packaged inside the jar.
@@ -34,6 +34,15 @@ Networking now exchanges the client/server mod version and protocol version when
 
 Grid-cell editing uses direct ray intersections against configured cell bounds. This deliberately ignores foreground signs, item frames, and similar decorations so the nearest grid cell under the crosshair remains editable.
 
+## v2.0.1 Work
+
+- The held-item locator now defaults to the grave-accent/tilde key instead of `P`.
+- Finder and cell-editor item choices are sourced from ordinary creative tabs, excluding operator-only technical entries.
+- Routine synchronization and debug chat messages have been removed.
+- Sloppiness detection compares container contents before and after each click, so removals and pre-existing misplaced items do not produce false positives.
+- Sloppiness validation now resolves item variants through their configured destination and correctly handles both halves of double chests.
+- The README now provides a marketable overview, Modrinth-first installation, detailed usage guidance, and a preference for safe in-game configuration.
+
 ## Important Files
 
 - `src/main/java/com/storageguide/StorageGuideServer.java`
@@ -44,10 +53,8 @@ Grid-cell editing uses direct ray intersections against configured cell bounds. 
   - Operator command registration.
 - `src/main/java/com/storageguide/StorageGuideClient.java`
   - Client controls, networking, highlights, and screens.
-- `src/main/java/com/storageguide/StorageGuideClientConfig.java`
-  - Client-only debug configuration.
 - `src/main/java/com/storageguide/mixin/AbstractContainerMenuMixin.java`
-  - Runs the detector after a container click.
+  - Captures chest contents before a click and runs the detector afterward.
 - `src/main/java/com/storageguide/mixin/CompoundContainerAccessor.java`
   - Exposes both containers in a double chest.
 - `src/main/resources/storageguide.mixins.json`
@@ -96,16 +103,17 @@ Recommended in-game checks:
 6. Confirm repeated clicks do not spam announcements during the 30-second cooldown.
 7. Test both single and double chests.
 8. Run `/storageguide sloppiness_detector off` and confirm announcements stop.
-9. Set `debugMode` to `true` in `config/storageguide-client.json` and confirm routine client messages become visible.
-10. Test finder live search and readable item names.
+9. Test finder live search and readable item names.
+10. Confirm operator-only technical entries do not appear in finder or editor lists.
 11. Test empty and non-empty shulker lookup for multiple shulker colors.
 12. Test correctly and incorrectly packed shulkers with the sloppiness detector.
-13. Test grid-cell editing with signs and item frames in front of chests.
-14. Test highlights with Iris/Photon enabled.
-15. Test a current client/server pair and legacy packet fallback with an older peer.
+13. Confirm removing items and clicking around a chest with an old misplaced item do not trigger a new warning.
+14. Test grid-cell editing with signs and item frames in front of chests.
+15. Test highlights with Iris/Photon enabled.
+16. Test a current client/server pair and legacy packet fallback with an older peer.
 
 ## Notes for the Next Maintainer
 
-- `mod_version` is `2.0.0` in `gradle.properties`.
+- `mod_version` is `2.0.1` in `gradle.properties`.
 - Never change the codec of an existing payload ID. Add a new payload ID and negotiate support.
 - Before a future release, choose the next version, update release-facing documentation, rebuild, inspect the jar metadata/icon, and perform the in-game checks above.

@@ -21,6 +21,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
+import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -31,8 +32,10 @@ import org.lwjgl.glfw.GLFW;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -42,7 +45,6 @@ public final class StorageGuideClient implements ClientModInitializer {
     private KeyMapping locateHeldKey;
     private KeyMapping findMenuKey;
 
-    private static StorageGuideClientConfig clientConfig;
     private static boolean hasGrid;
     private static boolean canEdit;
     private static boolean requestedInitialState;
@@ -57,9 +59,8 @@ public final class StorageGuideClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        clientConfig = StorageGuideClientConfig.load();
         this.selectOrEditKey = registerKey("select_or_edit", GLFW.GLFW_KEY_LEFT_BRACKET);
-        this.locateHeldKey = registerKey("locate_held_item", GLFW.GLFW_KEY_P);
+        this.locateHeldKey = registerKey("locate_held_item", GLFW.GLFW_KEY_GRAVE_ACCENT);
         this.findMenuKey = registerKey("find_menu", GLFW.GLFW_KEY_O);
 
         registerReceivers();
@@ -92,18 +93,15 @@ public final class StorageGuideClient implements ClientModInitializer {
                         activeHighlight = pos;
                         activeHighlightUntilMs = System.currentTimeMillis() + 8000L;
                     }, () -> activeHighlight = null);
-                    debugMessage(context.client(), payload.message());
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR, (payload, context) ->
                 context.client().execute(() -> context.client().setScreen(new CellEditorScreen(payload.cell()))));
-        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.MESSAGE, (payload, context) ->
-                context.client().execute(() -> debugMessage(context.client(), payload.message())));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.MESSAGE, (payload, context) -> {
+        });
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.SERVER_HELLO, (payload, context) ->
                 context.client().execute(() -> {
                     serverVersion = payload.version();
                     serverProtocolVersion = payload.protocolVersion();
-                    debugMessage(context.client(), "StorageGuide server version " + serverVersion
-                            + " (protocol " + serverProtocolVersion + ").");
                 }));
     }
 
@@ -284,12 +282,6 @@ public final class StorageGuideClient implements ClientModInitializer {
         }
     }
 
-    private static void debugMessage(Minecraft client, String message) {
-        if (clientConfig != null && clientConfig.debugMode()) {
-            message(client, message);
-        }
-    }
-
     private static void resetSessionState() {
         requestedInitialState = false;
         sentClientHello = false;
@@ -340,12 +332,9 @@ public final class StorageGuideClient implements ClientModInitializer {
 
     private static final class CellEditorScreen extends Screen {
         private static final int VISIBLE_ITEMS = 8;
-        private static final List<ItemOption> ITEM_OPTIONS = BuiltInRegistries.ITEM.keySet().stream()
-                .map(ItemOption::fromIdentifier)
-                .sorted(Comparator.comparing(ItemOption::displayName))
-                .toList();
 
         private final StorageGuideNetworking.CellDto cell;
+        private final List<ItemOption> itemOptions = availableItemOptions();
         private final List<Button> itemButtons = new ArrayList<>();
         private EditBox searchBox;
         private Set<String> selectedItemIds;
@@ -448,7 +437,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         private List<ItemOption> filteredItems() {
             String query = this.searchBox == null ? "" : this.searchBox.getValue().trim().toLowerCase(Locale.ROOT);
-            return ITEM_OPTIONS.stream()
+            return this.itemOptions.stream()
                     .filter(option -> option.displayName().toLowerCase(Locale.ROOT).contains(query)
                             || option.id().toLowerCase(Locale.ROOT).contains(query))
                     .sorted(Comparator.comparing((ItemOption option) -> !selectedItemIds.contains(option.id()))
@@ -460,11 +449,8 @@ public final class StorageGuideClient implements ClientModInitializer {
 
     private static final class FindItemScreen extends Screen {
         private static final int VISIBLE_ITEMS = 8;
-        private static final List<ItemOption> ITEM_OPTIONS = BuiltInRegistries.ITEM.keySet().stream()
-                .map(ItemOption::fromIdentifier)
-                .sorted(Comparator.comparing(ItemOption::displayName))
-                .toList();
 
+        private final List<ItemOption> itemOptions = availableItemOptions();
         private final List<Button> itemButtons = new ArrayList<>();
         private EditBox searchBox;
         private Button upButton;
@@ -580,7 +566,7 @@ public final class StorageGuideClient implements ClientModInitializer {
                 return List.of();
             }
 
-            return ITEM_OPTIONS.stream()
+            return this.itemOptions.stream()
                     .filter(option -> option.displayName().toLowerCase(Locale.ROOT).contains(query)
                             || option.id().toLowerCase(Locale.ROOT).contains(query))
                     .sorted(Comparator
@@ -614,6 +600,32 @@ public final class StorageGuideClient implements ClientModInitializer {
         static ItemOption fromIdentifier(Identifier id) {
             return new ItemOption(id.toString(), itemDisplayName(id));
         }
+    }
+
+    private static List<ItemOption> availableItemOptions() {
+        Minecraft client = Minecraft.getInstance();
+        if (client.getConnection() == null) {
+            return List.of();
+        }
+
+        CreativeModeTabs.tryRebuildTabContents(
+                client.getConnection().enabledFeatures(),
+                false,
+                client.getConnection().registryAccess()
+        );
+
+        Map<String, ItemOption> options = new LinkedHashMap<>();
+        CreativeModeTabs.tabs().stream()
+                .flatMap(tab -> tab.getDisplayItems().stream())
+                .filter(stack -> !stack.isEmpty())
+                .forEach(stack -> {
+                    Identifier id = BuiltInRegistries.ITEM.getKey(stack.getItem());
+                    options.putIfAbsent(id.toString(), ItemOption.fromIdentifier(id));
+                });
+
+        return options.values().stream()
+                .sorted(Comparator.comparing(ItemOption::displayName))
+                .toList();
     }
 
     private static String normalizeClientItemId(String itemId) {

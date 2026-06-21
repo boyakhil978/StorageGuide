@@ -1,12 +1,11 @@
 # Todo for storageguide
 
-Remove Sync Debug Messages 
-
-Lot of items incorrectly being detected as sloppy by the slopiness detector (in this case the mod itself pointed the user to store it there but positively flags it as sloppy) especially for variant items. Also sloppy detects sometimes when removing items from chest.
-
 Add a menu that to configure common settings (acessible by the Mod Menu mod).
 
 Add color settings for the higlight border that can be configured in the mod menu. Add a picker if possible.
+
+Also the hotbar border around the selected item should also change color based on if the item is found our not.
+
 
 Add operater menu for easy gui management of settings
 

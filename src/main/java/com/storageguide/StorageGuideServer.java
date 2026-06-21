@@ -189,7 +189,6 @@ public final class StorageGuideServer {
 
     private static void sendFindMenu(ServerPlayer player) {
         sendState(player);
-        message(player, "StorageGuide find menu synced from the server.");
     }
 
     private static void editCell(ServerPlayer player, String cellId, java.util.List<String> itemIds) {
@@ -289,7 +288,6 @@ public final class StorageGuideServer {
 
     private static void message(ServerPlayer player, String message) {
         player.sendSystemMessage(Component.literal(message));
-        sendIfSupported(player, new StorageGuideNetworking.MessagePayload(message));
     }
 
     private static void sendIfSupported(ServerPlayer player, CustomPacketPayload payload) {
@@ -313,7 +311,18 @@ public final class StorageGuideServer {
         save();
     }
 
-    public static void afterContainerClick(AbstractContainerMenu menu, Player player) {
+    public static ContainerSnapshot captureContainerState(AbstractContainerMenu menu, Player player) {
+        if (!(player instanceof ServerPlayer) || !(menu instanceof ChestMenu chestMenu)) {
+            return null;
+        }
+        if (!config.sloppinessDetector() || !config.hasGrid() || cellsByPosition.isEmpty()) {
+            return null;
+        }
+
+        return new ContainerSnapshot(copyContainerItems(chestMenu.getContainer()));
+    }
+
+    public static void afterContainerClick(AbstractContainerMenu menu, Player player, ContainerSnapshot before) {
         if (!(player instanceof ServerPlayer serverPlayer) || !(menu instanceof ChestMenu chestMenu)) {
             return;
         }
@@ -322,41 +331,70 @@ public final class StorageGuideServer {
         }
 
         Container container = chestMenu.getContainer();
-        RelevantChest relevantChest = findRelevantChest(container).orElse(null);
-        if (relevantChest == null || relevantChest.cell().itemIds().isEmpty()) {
+        List<RelevantChest> relevantChests = findRelevantChests(container);
+        if (relevantChests.isEmpty()) {
             return;
         }
 
-        Set<String> allowedItems = new HashSet<>(relevantChest.cell().itemIds());
-        for (ItemStack stack : container) {
-            if (stack.isEmpty()) {
-                continue;
-            }
-
-            if (!isAllowedInCell(stack, relevantChest.cell(), allowedItems)) {
-                announceSloppiness(serverPlayer, relevantChest.pos());
-                return;
-            }
+        List<ItemStack> beforeItems = before == null ? List.of() : before.items();
+        List<ItemStack> afterItems = copyContainerItems(container);
+        if (hasNewIncompatibleItem(beforeItems, afterItems, relevantChests)) {
+            announceSloppiness(serverPlayer, relevantChests.getFirst().pos());
         }
     }
 
-    private static boolean isAllowedInCell(
-            ItemStack stack,
-            StorageGuideConfig.StorageCell cell,
-            Set<String> allowedItems
+    private static boolean hasNewIncompatibleItem(
+            List<ItemStack> beforeItems,
+            List<ItemStack> afterItems,
+            List<RelevantChest> relevantChests
     ) {
-        if (!isShulkerBox(stack)) {
-            return allowedItems.contains(itemId(stack));
+        List<ItemStack> checked = new ArrayList<>();
+        for (ItemStack stack : afterItems) {
+            if (stack.isEmpty() || isAllowedInChests(stack, relevantChests) || containsMatchingStack(checked, stack)) {
+                continue;
+            }
+
+            checked.add(stack);
+            if (countMatchingItems(afterItems, stack) > countMatchingItems(beforeItems, stack)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAllowedInChests(ItemStack stack, List<RelevantChest> relevantChests) {
+        Optional<StorageGuideConfig.StorageCell> targetCell;
+        if (isShulkerBox(stack)) {
+            List<ItemStack> contents = shulkerContents(stack);
+            targetCell = contents.isEmpty()
+                    ? config.findCellForItem(itemId(stack))
+                    : findCellForShulkerContents(contents);
+        } else {
+            targetCell = config.findCellForItem(itemId(stack));
         }
 
-        List<ItemStack> contents = shulkerContents(stack);
-        if (contents.isEmpty()) {
-            return allowedItems.contains(itemId(stack));
-        }
-
-        return findCellForShulkerContents(contents)
-                .map(found -> found.id().equals(cell.id()))
+        return targetCell
+                .map(target -> relevantChests.stream().anyMatch(chest -> chest.cell().id().equals(target.id())))
                 .orElse(false);
+    }
+
+    private static int countMatchingItems(List<ItemStack> items, ItemStack target) {
+        return items.stream()
+                .filter(stack -> ItemStack.isSameItemSameComponents(stack, target))
+                .mapToInt(ItemStack::getCount)
+                .sum();
+    }
+
+    private static boolean containsMatchingStack(List<ItemStack> items, ItemStack target) {
+        return items.stream().anyMatch(stack -> ItemStack.isSameItemSameComponents(stack, target));
+    }
+
+    private static List<ItemStack> copyContainerItems(Container container) {
+        List<ItemStack> items = new ArrayList<>(container.getContainerSize());
+        for (ItemStack stack : container) {
+            items.add(stack.copy());
+        }
+        return List.copyOf(items);
     }
 
     private static Optional<StorageGuideConfig.StorageCell> findCellForShulkerContents(List<ItemStack> contents) {
@@ -389,14 +427,16 @@ public final class StorageGuideServer {
         return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
     }
 
-    private static Optional<RelevantChest> findRelevantChest(Container container) {
+    private static List<RelevantChest> findRelevantChests(Container container) {
+        List<RelevantChest> relevant = new ArrayList<>();
+        Set<String> seenCellIds = new HashSet<>();
         for (ChestBlockEntity chest : chestBlockEntities(container)) {
             StorageGuideConfig.StorageCell cell = cellsByPosition.get(chest.getBlockPos());
-            if (cell != null) {
-                return Optional.of(new RelevantChest(chest.getBlockPos(), cell));
+            if (cell != null && seenCellIds.add(cell.id())) {
+                relevant.add(new RelevantChest(chest.getBlockPos(), cell));
             }
         }
-        return Optional.empty();
+        return List.copyOf(relevant);
     }
 
     private static List<ChestBlockEntity> chestBlockEntities(Container container) {
@@ -439,5 +479,8 @@ public final class StorageGuideServer {
     }
 
     private record ClientVersion(String version, int protocolVersion) {
+    }
+
+    public record ContainerSnapshot(List<ItemStack> items) {
     }
 }
