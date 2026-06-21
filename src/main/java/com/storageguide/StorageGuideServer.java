@@ -1,10 +1,13 @@
 package com.storageguide;
 
 import com.storageguide.mixin.CompoundContainerAccessor;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -14,7 +17,10 @@ import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 
 import java.nio.file.Path;
@@ -36,6 +42,7 @@ public final class StorageGuideServer {
     private static Map<BlockPos, StorageGuideConfig.StorageCell> cellsByPosition = Map.of();
     private static final Map<UUID, Long> lastPlayerSloppinessAnnouncement = new HashMap<>();
     private static final Map<BlockPos, Long> lastChestSloppinessAnnouncement = new HashMap<>();
+    private static final Map<UUID, ClientVersion> clientVersions = new HashMap<>();
 
     private StorageGuideServer() {
     }
@@ -55,6 +62,7 @@ public final class StorageGuideServer {
         cellsByPosition = Map.of();
         lastPlayerSloppinessAnnouncement.clear();
         lastChestSloppinessAnnouncement.clear();
+        clientVersions.clear();
     }
 
     public static void registerReceivers() {
@@ -65,13 +73,35 @@ public final class StorageGuideServer {
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.SET_GRID, (payload, context) ->
                 context.server().execute(() -> setGrid(context.player(), payload.first(), payload.second())));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.LOCATE_HELD, (payload, context) ->
-                context.server().execute(() -> locate(context.player(), payload.itemId())));
+                context.server().execute(() -> locateItem(context.player(), payload.itemId())));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.LOCATE_HELD_V2, (payload, context) ->
+                context.server().execute(() -> locateHeld(context.player())));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.LOCATE_ITEM, (payload, context) ->
+                context.server().execute(() -> locateItem(context.player(), payload.itemId())));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.CLIENT_HELLO, (payload, context) ->
+                context.server().execute(() -> receiveClientHello(
+                        context.player(),
+                        payload.version(),
+                        payload.protocolVersion()
+                )));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_FIND, (payload, context) ->
                 context.server().execute(() -> sendFindMenu(context.player())));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.REQUEST_EDIT_CELL, (payload, context) ->
                 context.server().execute(() -> openEditor(context.player(), payload.pos())));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.EDIT_CELL, (payload, context) ->
                 context.server().execute(() -> editCell(context.player(), payload.cellId(), payload.itemIds())));
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+                clientVersions.remove(handler.player.getUUID()));
+    }
+
+    private static void receiveClientHello(ServerPlayer player, String version, int protocolVersion) {
+        clientVersions.put(player.getUUID(), new ClientVersion(version, protocolVersion));
+        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.SERVER_HELLO)) {
+            ServerPlayNetworking.send(player, new StorageGuideNetworking.ServerHelloPayload(
+                    StorageGuideMod.version(),
+                    StorageGuideMod.PROTOCOL_VERSION
+            ));
+        }
     }
 
     private static void beginSelect(ServerPlayer player) {
@@ -107,7 +137,41 @@ public final class StorageGuideServer {
         }
     }
 
-    private static void locate(ServerPlayer player, String itemId) {
+    private static void locateHeld(ServerPlayer player) {
+        ItemStack stack = player.getMainHandItem();
+        if (stack.isEmpty()) {
+            stack = player.getOffhandItem();
+        }
+        if (stack.isEmpty()) {
+            message(player, "Hold an item to locate it.");
+            return;
+        }
+
+        if (!isShulkerBox(stack)) {
+            locateItem(player, itemId(stack));
+            return;
+        }
+
+        List<ItemStack> contents = shulkerContents(stack);
+        if (contents.isEmpty()) {
+            locateItem(player, itemId(stack));
+            return;
+        }
+
+        Optional<StorageGuideConfig.StorageCell> cell = findCellForShulkerContents(contents);
+        if (cell.isEmpty()) {
+            sendIfSupported(player, new StorageGuideNetworking.HighlightPayload(Optional.empty(), ""));
+            message(player, "The shulker box has items incompatible with any chest configuration");
+            return;
+        }
+
+        sendIfSupported(player, new StorageGuideNetworking.HighlightPayload(
+                Optional.of(cell.get().origin()),
+                "StorageGuide locating shulker box contents."
+        ));
+    }
+
+    private static void locateItem(ServerPlayer player, String itemId) {
         String normalized = normalizeItemId(itemId);
         if (normalized.isBlank()) {
             message(player, "Hold an item to locate it.");
@@ -116,11 +180,11 @@ public final class StorageGuideServer {
 
         Optional<StorageGuideConfig.StorageCell> cell = config.findCellForItem(normalized);
         if (cell.isEmpty()) {
-            ServerPlayNetworking.send(player, new StorageGuideNetworking.HighlightPayload(Optional.empty(), "StorageGuide has no cell for " + normalized + "."));
+            sendIfSupported(player, new StorageGuideNetworking.HighlightPayload(Optional.empty(), "StorageGuide has no cell for " + normalized + "."));
             return;
         }
 
-        ServerPlayNetworking.send(player, new StorageGuideNetworking.HighlightPayload(Optional.of(cell.get().origin()), "StorageGuide locating " + normalized + "."));
+        sendIfSupported(player, new StorageGuideNetworking.HighlightPayload(Optional.of(cell.get().origin()), "StorageGuide locating " + normalized + "."));
     }
 
     private static void sendFindMenu(ServerPlayer player) {
@@ -186,13 +250,13 @@ public final class StorageGuideServer {
         }
 
         StorageGuideConfig.StorageCell found = cell.get();
-        ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenEditorPayload(
+        sendIfSupported(player, new StorageGuideNetworking.OpenEditorPayload(
                 new StorageGuideNetworking.CellDto(found.id(), found.origin(), found.itemIds())
         ));
     }
 
     private static void sendState(ServerPlayer player) {
-        ServerPlayNetworking.send(player, new StorageGuideNetworking.StatePayload(config.hasGrid(), canEdit(player), config.toDtos()));
+        sendIfSupported(player, new StorageGuideNetworking.StatePayload(config.hasGrid(), canEdit(player), config.toDtos()));
     }
 
     private static void sendStateToAll() {
@@ -225,7 +289,13 @@ public final class StorageGuideServer {
 
     private static void message(ServerPlayer player, String message) {
         player.sendSystemMessage(Component.literal(message));
-        ServerPlayNetworking.send(player, new StorageGuideNetworking.MessagePayload(message));
+        sendIfSupported(player, new StorageGuideNetworking.MessagePayload(message));
+    }
+
+    private static void sendIfSupported(ServerPlayer player, CustomPacketPayload payload) {
+        if (ServerPlayNetworking.canSend(player, payload.type())) {
+            ServerPlayNetworking.send(player, payload);
+        }
     }
 
     private static void save() {
@@ -263,12 +333,60 @@ public final class StorageGuideServer {
                 continue;
             }
 
-            String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-            if (!allowedItems.contains(itemId)) {
+            if (!isAllowedInCell(stack, relevantChest.cell(), allowedItems)) {
                 announceSloppiness(serverPlayer, relevantChest.pos());
                 return;
             }
         }
+    }
+
+    private static boolean isAllowedInCell(
+            ItemStack stack,
+            StorageGuideConfig.StorageCell cell,
+            Set<String> allowedItems
+    ) {
+        if (!isShulkerBox(stack)) {
+            return allowedItems.contains(itemId(stack));
+        }
+
+        List<ItemStack> contents = shulkerContents(stack);
+        if (contents.isEmpty()) {
+            return allowedItems.contains(itemId(stack));
+        }
+
+        return findCellForShulkerContents(contents)
+                .map(found -> found.id().equals(cell.id()))
+                .orElse(false);
+    }
+
+    private static Optional<StorageGuideConfig.StorageCell> findCellForShulkerContents(List<ItemStack> contents) {
+        StorageGuideConfig.StorageCell target = null;
+        for (ItemStack containedStack : contents) {
+            Optional<StorageGuideConfig.StorageCell> cell = config.findCellForItem(itemId(containedStack));
+            if (cell.isEmpty()) {
+                return Optional.empty();
+            }
+            if (target == null) {
+                target = cell.get();
+            } else if (!target.id().equals(cell.get().id())) {
+                return Optional.empty();
+            }
+        }
+        return Optional.ofNullable(target);
+    }
+
+    private static boolean isShulkerBox(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem blockItem
+                && blockItem.getBlock() instanceof ShulkerBoxBlock;
+    }
+
+    private static List<ItemStack> shulkerContents(ItemStack stack) {
+        ItemContainerContents contents = stack.getOrDefault(DataComponents.CONTAINER, ItemContainerContents.EMPTY);
+        return contents.nonEmptyItemCopyStream().toList();
+    }
+
+    private static String itemId(ItemStack stack) {
+        return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
     }
 
     private static Optional<RelevantChest> findRelevantChest(Container container) {
@@ -318,5 +436,8 @@ public final class StorageGuideServer {
     }
 
     private record RelevantChest(BlockPos pos, StorageGuideConfig.StorageCell cell) {
+    }
+
+    private record ClientVersion(String version, int protocolVersion) {
     }
 }

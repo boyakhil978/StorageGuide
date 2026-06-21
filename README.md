@@ -9,9 +9,11 @@ StorageGuide is a Fabric client/server mod for Minecraft `26.1.2+`. Operators ma
 - Server-backed storage guide shared by everyone on the server.
 - One jar for both client and server.
 - Operator-only grid creation and multi-item assignment.
-- Simple in-world highlights for storage cells and lookup results.
-- Finder menu with readable item names like `emerald`.
-- Quick locate key for the item in your hand.
+- Shader-compatible in-world highlights for storage cells and lookup results.
+- Live item finder with readable, clickable search results.
+- Quick locate key with content-aware shulker-box routing.
+- Optional server-side sloppiness detection for misplaced items.
+- Version-aware networking with legacy packet fallbacks.
 - One authoritative config file: `config/storageguide.json`.
 
 ## How It Works
@@ -27,7 +29,7 @@ StorageGuide treats one vertical side of your storage room as a grid. Each selec
 
 ## Installation
 
-Install `storageguide-1.0.0.jar` on both the server and every client that wants to use StorageGuide.
+Install `storageguide-2.0.0.jar` on both the server and every client that wants to use StorageGuide.
 
 The server stores the shared storage wall configuration in:
 
@@ -52,7 +54,7 @@ Create the grid:
 Edit assignments:
 
 1. Press the select/edit key to highlight the existing grid.
-2. Look at a highlighted cell and press the key again.
+2. Look toward a highlighted cell and press the key again. StorageGuide targets the nearest grid cell along your line of sight, even when a sign or item frame is in front of it.
 3. Check one or more items in the editor and save.
 
 When an item is assigned to a chest, StorageGuide removes that same item from any other chest so lookup results stay unambiguous.
@@ -62,8 +64,23 @@ Escape, the pause menu, or rejoining exits edit mode without saving.
 ## For Players
 
 - Hold an item and press the locate key to highlight its assigned chest slot.
-- Open the finder menu to search for an item manually.
+- Hold a non-empty shulker box and press locate to find the one chest compatible with all its contents.
+- Empty shulker boxes locate by their own exact color assignment.
+- Open the finder menu and type to select from live, readable item results.
 - Highlights are local to you; the server remains the source of truth.
+
+If a held shulker contains items assigned to different chests, or contains an unassigned item, StorageGuide reports that it is incompatible and does not highlight a chest.
+
+## Sloppiness Detector
+
+Operators can enable optional misplaced-item detection:
+
+```text
+/storageguide sloppiness_detector on
+/storageguide sloppiness_detector off
+```
+
+When enabled, the server announces when a player places an incompatible item in an assigned chest. Correctly packed shulker boxes are accepted in the chest matching their contents, and empty colored shulkers follow their own item assignments.
 
 ## Release Channels
 
@@ -72,7 +89,7 @@ StorageGuide uses two release channels:
 - Stable: production-ready versions, tagged as `vX.Y.Z` and published to Modrinth as Release.
 - Beta: test builds, tagged as `vX.Y.Z-beta.N` and published to Modrinth as Beta.
 
-Current stable release: `v1.0.0`.
+Current stable release: `v2.0.0`.
 
 ## Source And License
 

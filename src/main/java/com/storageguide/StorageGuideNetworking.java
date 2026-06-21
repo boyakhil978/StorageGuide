@@ -21,6 +21,10 @@ public final class StorageGuideNetworking {
     public static final CustomPacketPayload.Type<BeginSelectPayload> BEGIN_SELECT = type("begin_select");
     public static final CustomPacketPayload.Type<SetGridPayload> SET_GRID = type("set_grid");
     public static final CustomPacketPayload.Type<LocateHeldPayload> LOCATE_HELD = type("locate_held");
+    public static final CustomPacketPayload.Type<LocateHeldV2Payload> LOCATE_HELD_V2 = type("locate_held_v2");
+    public static final CustomPacketPayload.Type<LocateItemPayload> LOCATE_ITEM = type("locate_item");
+    public static final CustomPacketPayload.Type<ClientHelloPayload> CLIENT_HELLO = type("client_hello");
+    public static final CustomPacketPayload.Type<ServerHelloPayload> SERVER_HELLO = type("server_hello");
     public static final CustomPacketPayload.Type<OpenFindPayload> OPEN_FIND = type("open_find");
     public static final CustomPacketPayload.Type<RequestEditCellPayload> REQUEST_EDIT_CELL = type("request_edit_cell");
     public static final CustomPacketPayload.Type<EditCellPayload> EDIT_CELL = type("edit_cell");
@@ -34,6 +38,9 @@ public final class StorageGuideNetworking {
         PayloadTypeRegistry.serverboundPlay().register(BEGIN_SELECT, BeginSelectPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(SET_GRID, SetGridPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(LOCATE_HELD, LocateHeldPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(LOCATE_HELD_V2, LocateHeldV2Payload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(LOCATE_ITEM, LocateItemPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(CLIENT_HELLO, ClientHelloPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(OPEN_FIND, OpenFindPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(REQUEST_EDIT_CELL, RequestEditCellPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(EDIT_CELL, EditCellPayload.CODEC);
@@ -41,6 +48,7 @@ public final class StorageGuideNetworking {
         PayloadTypeRegistry.clientboundPlay().register(HIGHLIGHT, HighlightPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_EDITOR, OpenEditorPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(MESSAGE, MessagePayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(SERVER_HELLO, ServerHelloPayload.CODEC);
     }
 
     private static <T extends CustomPacketPayload> CustomPacketPayload.Type<T> type(String path) {
@@ -87,6 +95,53 @@ public final class StorageGuideNetworking {
         @Override
         public Type<? extends CustomPacketPayload> type() {
             return LOCATE_HELD;
+        }
+    }
+
+    public record LocateHeldV2Payload() implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, LocateHeldV2Payload> CODEC = StreamCodec.unit(new LocateHeldV2Payload());
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return LOCATE_HELD_V2;
+        }
+    }
+
+    public record LocateItemPayload(String itemId) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, LocateItemPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8, LocateItemPayload::itemId,
+                LocateItemPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return LOCATE_ITEM;
+        }
+    }
+
+    public record ClientHelloPayload(String version, int protocolVersion) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, ClientHelloPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8, ClientHelloPayload::version,
+                ByteBufCodecs.VAR_INT, ClientHelloPayload::protocolVersion,
+                ClientHelloPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return CLIENT_HELLO;
+        }
+    }
+
+    public record ServerHelloPayload(String version, int protocolVersion) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, ServerHelloPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8, ServerHelloPayload::version,
+                ByteBufCodecs.VAR_INT, ServerHelloPayload::protocolVersion,
+                ServerHelloPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return SERVER_HELLO;
         }
     }
 
