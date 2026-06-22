@@ -13,10 +13,13 @@ public final class StorageGuideCommands {
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
                 Commands.literal("storageguide")
-                        .requires(Commands.hasPermission(Commands.LEVEL_ADMINS))
                         .then(Commands.literal("settings")
+                                .requires(Commands.hasPermission(Commands.LEVEL_ADMINS))
                                 .executes(context -> openSettings(context.getSource())))
-                        .then(sloppinessDetector())
+                        .then(sloppinessDetector()
+                                .requires(Commands.hasPermission(Commands.LEVEL_ADMINS)))
+                        .then(Commands.literal("history")
+                                .executes(context -> openHistory(context.getSource())))
         ));
     }
 
@@ -46,6 +49,16 @@ public final class StorageGuideCommands {
         }
 
         StorageGuideServer.openOperatorSettings(source.getPlayer());
+        return 1;
+    }
+
+    private static int openHistory(CommandSourceStack source) {
+        if (!source.isPlayer()) {
+            source.sendFailure(Component.literal("StorageGuide history can only be opened by a player."));
+            return 0;
+        }
+
+        StorageGuideServer.sendSloppinessHistory(source.getPlayer());
         return 1;
     }
 }

@@ -1,14 +1,14 @@
 # StorageGuide Handoff
 
-Last updated: June 21, 2026
+Last updated: June 22, 2026
 
 ## Current State
 
 - Branch: `main`
 - Remote: `https://github.com/boyakhil978/StorageGuide.git`
-- Project version: `2.2.0`
-- Latest stable release: `2.2.0`
-- Stable release tag: `v2.2.0`
+- Project version: `2.3.0`
+- Latest stable release: `2.3.0`
+- Stable release tag: `v2.3.0`
 - `./gradlew clean build` passes.
 - Fabric metadata must identify the author as `Akhil Boyapati`.
 - The in-game mod icon is `assets/storageguide/icon.png`, a 512×512 PNG packaged inside the jar.
@@ -62,7 +62,18 @@ Default client colors:
 
 The hotbar status is only activated by held-item lookup, not continuously. Switching slots cancels it. It is disabled for an empty selected slot, hidden HUD, or spectator mode. For a non-empty shulker, it shows the success color only when every contained item resolves to the same configured cell. An empty shulker is checked by its exact shulker item/color assignment. `GuiMixin` redirects the vanilla selector draw through the API's tint overload, preserving the original texture shape.
 
-The operator settings screen is intentionally server-authoritative. All new payloads are guarded with `canSend` checks. Non-operators can open the menu in read-only mode and receive the permission explanation inside the screen rather than in chat. Save confirmations and rejected updates also return as menu state. At present, the screen only controls the existing sloppiness-detector toggle. Force-client enforcement and a configurable cooldown are still pending.
+The operator settings screen is intentionally server-authoritative. All new payloads are guarded with `canSend` checks. Non-operators can open the menu in read-only mode and receive the permission explanation inside the screen rather than in chat. Save confirmations and rejected updates also return as menu state.
+
+## v2.3.0 Work
+
+- Added operator controls for force-client enforcement and sloppiness announcement cooldown.
+- Force-client enforcement waits five seconds for the existing client hello packet before disconnecting a client without StorageGuide.
+- Added persistent per-cell sloppiness exclusions to the chest editor.
+- Added persistent sloppiness records before cooldown filtering, ensuring history contains every detected instance.
+- Added a public, paged history screen sorted by player and then newest-first.
+- Added `/storageguide history` for all players and a history button in client settings.
+- Migrated `config/storageguide.json` to schema version 4 with safe defaults for old files.
+- Added V2 payloads for richer operator settings and editor state without changing existing packet codecs.
 
 ## Important Files
 
@@ -145,10 +156,14 @@ Recommended in-game checks:
 18. Press `~` and confirm the selected frame temporarily becomes green for configured items and red for unconfigured items, then fades back to the vanilla texture.
 19. Confirm switching hotbar slots immediately cancels the status; test empty, compatible, and incompatible shulker boxes.
 20. Open operator settings as an operator and verify the detector toggle saves. Open it as a non-operator and confirm the read-only permission message appears inside the menu with no StorageGuide chat warning.
+21. Change the cooldown and verify announcements use the new duration while every instance still appears in history.
+22. Exclude a cell, place an incompatible item there, and confirm no history or announcement is created.
+23. Enable required clients and confirm a client without StorageGuide is disconnected after the handshake grace period.
+24. Open `/storageguide history` as a non-operator and verify entries are grouped by player.
 
 ## Remaining TODO Direction
 
-`TODO.md` was intentionally not edited when the first four entries were implemented, so it still lists work that is already present. Use the implementation and this handoff as the source of truth.
+`TODO.md` was intentionally not edited during implementation, so it still lists work that is already present. Use the implementation and this handoff as the source of truth.
 
 Completed locally:
 
@@ -156,18 +171,17 @@ Completed locally:
 - Configurable highlight color with RGB picker.
 - Configurable found/missing hotbar colors and selected-slot status.
 - Operator settings menu with sloppiness-detector control.
+- Force-client-mod enforcement and configurable announcement cooldown.
+- Individual cell exclusions from sloppiness detection.
+- Persistent public sloppiness history grouped by player.
 
 Still pending:
 
-- Add force-client-mod enforcement to operator settings.
-- Make the sloppiness cooldown operator-configurable.
-- Allow individual cells/chests to be excluded from sloppiness detection.
-- Track all sloppiness instances and provide the public per-player history menu.
 - Support multiple rectangular grids, separate creation/editing controls, and add confirmation/onboarding for new configurations.
 
 ## Notes for the Next Maintainer
 
-- `mod_version` is `2.2.0` in `gradle.properties`.
+- `mod_version` is `2.3.0` in `gradle.properties`.
 - Do not move or overwrite existing stable tags.
 - Never change the codec of an existing payload ID. Add a new payload ID and negotiate support.
 - Before a future release, choose the next version, update release-facing documentation, rebuild, inspect the jar metadata/icon, and perform the in-game checks above.

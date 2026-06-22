@@ -30,11 +30,17 @@ public final class StorageGuideNetworking {
     public static final CustomPacketPayload.Type<EditCellPayload> EDIT_CELL = type("edit_cell");
     public static final CustomPacketPayload.Type<RequestOperatorSettingsPayload> REQUEST_OPERATOR_SETTINGS = type("request_operator_settings");
     public static final CustomPacketPayload.Type<UpdateOperatorSettingsPayload> UPDATE_OPERATOR_SETTINGS = type("update_operator_settings");
+    public static final CustomPacketPayload.Type<UpdateOperatorSettingsV2Payload> UPDATE_OPERATOR_SETTINGS_V2 = type("update_operator_settings_v2");
+    public static final CustomPacketPayload.Type<EditCellV2Payload> EDIT_CELL_V2 = type("edit_cell_v2");
+    public static final CustomPacketPayload.Type<RequestSloppinessHistoryPayload> REQUEST_SLOPPINESS_HISTORY = type("request_sloppiness_history");
     public static final CustomPacketPayload.Type<StatePayload> STATE = type("state");
     public static final CustomPacketPayload.Type<HighlightPayload> HIGHLIGHT = type("highlight");
     public static final CustomPacketPayload.Type<OpenEditorPayload> OPEN_EDITOR = type("open_editor");
     public static final CustomPacketPayload.Type<MessagePayload> MESSAGE = type("message");
     public static final CustomPacketPayload.Type<OpenOperatorSettingsPayload> OPEN_OPERATOR_SETTINGS = type("open_operator_settings");
+    public static final CustomPacketPayload.Type<OpenOperatorSettingsV2Payload> OPEN_OPERATOR_SETTINGS_V2 = type("open_operator_settings_v2");
+    public static final CustomPacketPayload.Type<OpenEditorV2Payload> OPEN_EDITOR_V2 = type("open_editor_v2");
+    public static final CustomPacketPayload.Type<OpenSloppinessHistoryPayload> OPEN_SLOPPINESS_HISTORY = type("open_sloppiness_history");
 
     public static void registerPayloads() {
         PayloadTypeRegistry.serverboundPlay().register(REQUEST_STATE, RequestStatePayload.CODEC);
@@ -49,12 +55,18 @@ public final class StorageGuideNetworking {
         PayloadTypeRegistry.serverboundPlay().register(EDIT_CELL, EditCellPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(REQUEST_OPERATOR_SETTINGS, RequestOperatorSettingsPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(UPDATE_OPERATOR_SETTINGS, UpdateOperatorSettingsPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(UPDATE_OPERATOR_SETTINGS_V2, UpdateOperatorSettingsV2Payload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(EDIT_CELL_V2, EditCellV2Payload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(REQUEST_SLOPPINESS_HISTORY, RequestSloppinessHistoryPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(STATE, StatePayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(HIGHLIGHT, HighlightPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_EDITOR, OpenEditorPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(MESSAGE, MessagePayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(SERVER_HELLO, ServerHelloPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_OPERATOR_SETTINGS, OpenOperatorSettingsPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(OPEN_OPERATOR_SETTINGS_V2, OpenOperatorSettingsV2Payload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(OPEN_EDITOR_V2, OpenEditorV2Payload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(OPEN_SLOPPINESS_HISTORY, OpenSloppinessHistoryPayload.CODEC);
     }
 
     private static <T extends CustomPacketPayload> CustomPacketPayload.Type<T> type(String path) {
@@ -207,6 +219,52 @@ public final class StorageGuideNetworking {
         }
     }
 
+    public record UpdateOperatorSettingsV2Payload(
+            boolean sloppinessDetector,
+            boolean forceClientsToUseMod,
+            int sloppinessCooldownSeconds
+    ) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, UpdateOperatorSettingsV2Payload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, UpdateOperatorSettingsV2Payload::sloppinessDetector,
+                ByteBufCodecs.BOOL, UpdateOperatorSettingsV2Payload::forceClientsToUseMod,
+                ByteBufCodecs.VAR_INT, UpdateOperatorSettingsV2Payload::sloppinessCooldownSeconds,
+                UpdateOperatorSettingsV2Payload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return UPDATE_OPERATOR_SETTINGS_V2;
+        }
+    }
+
+    public record EditCellV2Payload(
+            String cellId,
+            List<String> itemIds,
+            boolean sloppinessExcluded
+    ) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, EditCellV2Payload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8, EditCellV2Payload::cellId,
+                ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8, 1024), EditCellV2Payload::itemIds,
+                ByteBufCodecs.BOOL, EditCellV2Payload::sloppinessExcluded,
+                EditCellV2Payload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return EDIT_CELL_V2;
+        }
+    }
+
+    public record RequestSloppinessHistoryPayload() implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, RequestSloppinessHistoryPayload> CODEC =
+                StreamCodec.unit(new RequestSloppinessHistoryPayload());
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return REQUEST_SLOPPINESS_HISTORY;
+        }
+    }
+
     public record CellDto(String id, BlockPos pos, List<String> itemIds) {
         static final StreamCodec<ByteBuf, CellDto> CODEC = StreamCodec.composite(
                 ByteBufCodecs.STRING_UTF8, CellDto::id,
@@ -282,6 +340,71 @@ public final class StorageGuideNetworking {
         @Override
         public Type<? extends CustomPacketPayload> type() {
             return OPEN_OPERATOR_SETTINGS;
+        }
+    }
+
+    public record OpenOperatorSettingsV2Payload(
+            boolean canEdit,
+            boolean sloppinessDetector,
+            boolean forceClientsToUseMod,
+            int sloppinessCooldownSeconds,
+            String statusMessage
+    ) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, OpenOperatorSettingsV2Payload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, OpenOperatorSettingsV2Payload::canEdit,
+                ByteBufCodecs.BOOL, OpenOperatorSettingsV2Payload::sloppinessDetector,
+                ByteBufCodecs.BOOL, OpenOperatorSettingsV2Payload::forceClientsToUseMod,
+                ByteBufCodecs.VAR_INT, OpenOperatorSettingsV2Payload::sloppinessCooldownSeconds,
+                ByteBufCodecs.STRING_UTF8, OpenOperatorSettingsV2Payload::statusMessage,
+                OpenOperatorSettingsV2Payload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return OPEN_OPERATOR_SETTINGS_V2;
+        }
+    }
+
+    public record OpenEditorV2Payload(CellDto cell, boolean sloppinessExcluded) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, OpenEditorV2Payload> CODEC = StreamCodec.composite(
+                CellDto.CODEC, OpenEditorV2Payload::cell,
+                ByteBufCodecs.BOOL, OpenEditorV2Payload::sloppinessExcluded,
+                OpenEditorV2Payload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return OPEN_EDITOR_V2;
+        }
+    }
+
+    public record SloppinessHistoryDto(
+            String playerName,
+            long timestamp,
+            String itemId,
+            String cellId,
+            BlockPos chestPos
+    ) {
+        static final StreamCodec<ByteBuf, SloppinessHistoryDto> CODEC = StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8, SloppinessHistoryDto::playerName,
+                ByteBufCodecs.VAR_LONG, SloppinessHistoryDto::timestamp,
+                ByteBufCodecs.STRING_UTF8, SloppinessHistoryDto::itemId,
+                ByteBufCodecs.STRING_UTF8, SloppinessHistoryDto::cellId,
+                BlockPos.STREAM_CODEC, SloppinessHistoryDto::chestPos,
+                SloppinessHistoryDto::new
+        );
+    }
+
+    public record OpenSloppinessHistoryPayload(List<SloppinessHistoryDto> entries) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, OpenSloppinessHistoryPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.collection(ArrayList::new, SloppinessHistoryDto.CODEC, 100_000),
+                OpenSloppinessHistoryPayload::entries,
+                OpenSloppinessHistoryPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return OPEN_SLOPPINESS_HISTORY;
         }
     }
 }

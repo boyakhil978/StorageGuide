@@ -12,6 +12,7 @@ Operators configure the room through a simple in-game editor, and every player u
 - **Organize as a team:** One server-managed storage layout stays consistent for everyone.
 - **Pack shulkers intelligently:** Route full shulker boxes by their contents, with support for every color.
 - **Spot misplaced items:** An optional sloppiness detector warns when something enters the wrong chest.
+- **Review every mistake:** A public history screen groups all detected instances by player, including events hidden by chat cooldowns.
 - **Keep your shaders:** Clear in-world highlights work with Iris shaders, including Photon.
 - **Personalize the interface:** Choose highlight and hotbar-status colors through Mod Menu.
 - **Configure everything in-game:** Create the grid, assign items, and manage operator settings without editing files.
@@ -137,9 +138,19 @@ The detector:
 - understands either half of a double chest;
 - accepts a non-empty shulker when all its contents belong to that chest;
 - treats an empty colored shulker according to the assignment for that exact shulker item; and
-- applies a 30-second announcement cooldown per player and per chest to prevent chat spam.
+- records every detected instance in persistent history, even when no announcement is sent;
+- allows operators to exclude individual configured chests from detection; and
+- applies a configurable announcement cooldown per player and per chest to prevent chat spam.
 
 Warnings are broadcast as `Sloppiness detected <player>!`.
+
+Anyone can open the history through StorageGuide's client settings or by running:
+
+```text
+/storageguide history
+```
+
+History is grouped by player. The announcement cooldown does not remove or combine history entries.
 
 ## Multiplayer and Version Compatibility
 
@@ -156,7 +167,9 @@ Whenever possible, configure StorageGuide in-game:
 - Open **Mod Menu → StorageGuide → Configure** to change the located-chest highlight, found-item hotbar color, missing-item hotbar color, or disable the hotbar indicator.
 - Operators can select **Operator Settings** from that screen while connected to a server.
 - Operators can also run `/storageguide settings` to open the server settings menu directly.
+- Operator Settings controls the detector, announcement cooldown, and whether joining clients must have StorageGuide installed.
 - Use `[` to create the storage grid and assign items.
+- A cell's edit screen can exclude that chest from sloppiness detection without removing its item assignments.
 - The `/storageguide sloppiness_detector` commands remain available for command-based management.
 
 The in-game tools validate changes and keep assignments consistent automatically.
@@ -173,7 +186,7 @@ The server stores this configuration at:
 config/storageguide.json
 ```
 
-The file contains the grid bounds, cell assignments, and sloppiness-detector setting. Manual editing is intended for advanced recovery or migration only. If it is necessary, stop the server first and make a backup before changing or restoring the file.
+The file contains grid bounds, cell assignments and exclusions, operator settings, and sloppiness history. Manual editing is intended for advanced recovery or migration only. If it is necessary, stop the server first and make a backup before changing or restoring the file.
 
 ## Troubleshooting
 
@@ -182,6 +195,8 @@ The file contains the grid bounds, cell assignments, and sloppiness-detector set
 - **A player cannot edit the grid:** Grid creation and assignment editing require operator permissions.
 - **Operator Settings is missing:** Join the server with operator permissions first, or run `/storageguide settings`.
 - **Operator Settings says permission is required:** The menu remains viewable, but server settings can only be changed by an operator.
+- **A client is disconnected when joining:** The server may require all joining players to install a compatible StorageGuide client.
+- **A chest never triggers detection:** Check whether that cell is marked as excluded in its edit screen.
 - **No search result appears:** Only assigned items can produce a chest highlight.
 - **A shulker is rejected:** Its non-empty contents must all be assigned to one storage cell.
 - **A highlight is hidden by a shader:** Verify the client is running the current release. Photon compatibility uses the mod's dedicated highlight renderer.
@@ -198,7 +213,7 @@ The distributable jar is written to `build/libs/storageguide-<version>.jar`.
 
 ## Releases, Source, and License
 
-- Current stable release: `v2.2.0`
+- Current stable release: `v2.3.0`
 - Download: https://modrinth.com/mod/storageguide
 - Stable tags: `vX.Y.Z`
 - Beta tags: `vX.Y.Z-beta.N`

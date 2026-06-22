@@ -1,6 +1,7 @@
 package com.storageguide;
 
 import com.storageguide.mixin.CompoundContainerAccessor;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
@@ -34,7 +35,7 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class StorageGuideServer {
-    private static final long SLOPPINESS_COOLDOWN_MS = 30_000L;
+    private static final long CLIENT_HANDSHAKE_GRACE_MS = 5_000L;
 
     private static StorageGuideConfig config = new StorageGuideConfig();
     private static Path configPath;
@@ -43,6 +44,7 @@ public final class StorageGuideServer {
     private static final Map<UUID, Long> lastPlayerSloppinessAnnouncement = new HashMap<>();
     private static final Map<BlockPos, Long> lastChestSloppinessAnnouncement = new HashMap<>();
     private static final Map<UUID, ClientVersion> clientVersions = new HashMap<>();
+    private static final Map<UUID, Long> clientHandshakeDeadlines = new HashMap<>();
 
     private StorageGuideServer() {
     }
@@ -63,6 +65,7 @@ public final class StorageGuideServer {
         lastPlayerSloppinessAnnouncement.clear();
         lastChestSloppinessAnnouncement.clear();
         clientVersions.clear();
+        clientHandshakeDeadlines.clear();
     }
 
     public static void registerReceivers() {
@@ -94,12 +97,35 @@ public final class StorageGuideServer {
                 context.server().execute(() -> openOperatorSettings(context.player())));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS, (payload, context) ->
                 context.server().execute(() -> updateOperatorSettings(context.player(), payload.sloppinessDetector())));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V2, (payload, context) ->
+                context.server().execute(() -> updateOperatorSettings(
+                        context.player(),
+                        payload.sloppinessDetector(),
+                        payload.forceClientsToUseMod(),
+                        payload.sloppinessCooldownSeconds()
+                )));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.EDIT_CELL_V2, (payload, context) ->
+                context.server().execute(() -> editCell(
+                        context.player(),
+                        payload.cellId(),
+                        payload.itemIds(),
+                        payload.sloppinessExcluded()
+                )));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.REQUEST_SLOPPINESS_HISTORY, (payload, context) ->
+                context.server().execute(() -> sendSloppinessHistory(context.player())));
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            if (config.forceClientsToUseMod()) {
+                clientHandshakeDeadlines.put(handler.player.getUUID(), System.currentTimeMillis() + CLIENT_HANDSHAKE_GRACE_MS);
+            }
+        });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
-                clientVersions.remove(handler.player.getUUID()));
+                clearClientSession(handler.player.getUUID()));
+        ServerTickEvents.END_SERVER_TICK.register(server -> enforceRequiredClients());
     }
 
     private static void receiveClientHello(ServerPlayer player, String version, int protocolVersion) {
         clientVersions.put(player.getUUID(), new ClientVersion(version, protocolVersion));
+        clientHandshakeDeadlines.remove(player.getUUID());
         if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.SERVER_HELLO)) {
             ServerPlayNetworking.send(player, new StorageGuideNetworking.ServerHelloPayload(
                     StorageGuideMod.version(),
@@ -196,6 +222,15 @@ public final class StorageGuideServer {
     }
 
     private static void editCell(ServerPlayer player, String cellId, java.util.List<String> itemIds) {
+        editCell(player, cellId, itemIds, null);
+    }
+
+    private static void editCell(
+            ServerPlayer player,
+            String cellId,
+            java.util.List<String> itemIds,
+            Boolean sloppinessExcluded
+    ) {
         if (!canEdit(player)) {
             message(player, "StorageGuide editing requires operator permission.");
             return;
@@ -234,6 +269,9 @@ public final class StorageGuideServer {
         }
 
         cell.get().setItemIds(normalized);
+        if (sloppinessExcluded != null) {
+            cell.get().setSloppinessExcluded(sloppinessExcluded);
+        }
         save();
         rebuildCaches();
         sendStateToAll();
@@ -253,9 +291,16 @@ public final class StorageGuideServer {
         }
 
         StorageGuideConfig.StorageCell found = cell.get();
-        sendIfSupported(player, new StorageGuideNetworking.OpenEditorPayload(
-                new StorageGuideNetworking.CellDto(found.id(), found.origin(), found.itemIds())
-        ));
+        StorageGuideNetworking.CellDto dto =
+                new StorageGuideNetworking.CellDto(found.id(), found.origin(), found.itemIds());
+        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_EDITOR_V2)) {
+            ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenEditorV2Payload(
+                    dto,
+                    found.sloppinessExcluded()
+            ));
+        } else {
+            sendIfSupported(player, new StorageGuideNetworking.OpenEditorPayload(dto));
+        }
     }
 
     public static void openOperatorSettings(ServerPlayer player) {
@@ -264,32 +309,78 @@ public final class StorageGuideServer {
             return;
         }
 
-        ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsPayload(
+        sendOperatorSettings(
+                player,
                 canEdit(player),
-                config.sloppinessDetector(),
                 canEdit(player) ? "" : "Operator permission is required to change server settings."
-        ));
+        );
     }
 
     private static void updateOperatorSettings(ServerPlayer player, boolean sloppinessDetector) {
+        updateOperatorSettings(
+                player,
+                sloppinessDetector,
+                config.forceClientsToUseMod(),
+                config.sloppinessCooldownSeconds()
+        );
+    }
+
+    private static void updateOperatorSettings(
+            ServerPlayer player,
+            boolean sloppinessDetector,
+            boolean forceClientsToUseMod,
+            int sloppinessCooldownSeconds
+    ) {
         if (!canEdit(player)) {
             sendOperatorSettings(player, false, "Operator permission is required to change server settings.");
             return;
         }
 
         config.setSloppinessDetector(sloppinessDetector);
+        config.setForceClientsToUseMod(forceClientsToUseMod);
+        config.setSloppinessCooldownSeconds(sloppinessCooldownSeconds);
         save();
+        refreshClientEnforcement();
         sendOperatorSettings(player, true, "Operator settings saved.");
     }
 
     private static void sendOperatorSettings(ServerPlayer player, boolean canEdit, String statusMessage) {
-        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS)) {
+        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V2)) {
+            ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsV2Payload(
+                    canEdit,
+                    config.sloppinessDetector(),
+                    config.forceClientsToUseMod(),
+                    config.sloppinessCooldownSeconds(),
+                    statusMessage
+            ));
+        } else if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS)) {
             ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsPayload(
                     canEdit,
                     config.sloppinessDetector(),
                     statusMessage
             ));
         }
+    }
+
+    public static void sendSloppinessHistory(ServerPlayer player) {
+        if (!ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_SLOPPINESS_HISTORY)) {
+            message(player, "Your StorageGuide client does not support the sloppiness history menu.");
+            return;
+        }
+
+        List<StorageGuideNetworking.SloppinessHistoryDto> entries = config.sloppinessHistory().stream()
+                .sorted(java.util.Comparator
+                        .comparing(StorageGuideConfig.SloppinessRecord::playerName, String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(StorageGuideConfig.SloppinessRecord::timestamp, java.util.Comparator.reverseOrder()))
+                .map(record -> new StorageGuideNetworking.SloppinessHistoryDto(
+                        record.playerName(),
+                        record.timestamp(),
+                        record.itemId(),
+                        record.cellId(),
+                        record.chestPos().toBlockPos()
+                ))
+                .toList();
+        ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenSloppinessHistoryPayload(entries));
     }
 
     private static void sendState(ServerPlayer player) {
@@ -376,12 +467,15 @@ public final class StorageGuideServer {
 
         List<ItemStack> beforeItems = before == null ? List.of() : before.items();
         List<ItemStack> afterItems = copyContainerItems(container);
-        if (hasNewIncompatibleItem(beforeItems, afterItems, relevantChests)) {
-            announceSloppiness(serverPlayer, relevantChests.getFirst().pos());
+        Optional<ItemStack> incompatible = findNewIncompatibleItem(beforeItems, afterItems, relevantChests);
+        if (incompatible.isPresent()) {
+            RelevantChest chest = relevantChests.getFirst();
+            recordSloppiness(serverPlayer, chest, incompatible.get());
+            announceSloppiness(serverPlayer, chest.pos());
         }
     }
 
-    private static boolean hasNewIncompatibleItem(
+    private static Optional<ItemStack> findNewIncompatibleItem(
             List<ItemStack> beforeItems,
             List<ItemStack> afterItems,
             List<RelevantChest> relevantChests
@@ -394,10 +488,10 @@ public final class StorageGuideServer {
 
             checked.add(stack);
             if (countMatchingItems(afterItems, stack) > countMatchingItems(beforeItems, stack)) {
-                return true;
+                return Optional.of(stack.copy());
             }
         }
-        return false;
+        return Optional.empty();
     }
 
     private static boolean isAllowedInChests(ItemStack stack, List<RelevantChest> relevantChests) {
@@ -470,6 +564,9 @@ public final class StorageGuideServer {
         Set<String> seenCellIds = new HashSet<>();
         for (ChestBlockEntity chest : chestBlockEntities(container)) {
             StorageGuideConfig.StorageCell cell = cellsByPosition.get(chest.getBlockPos());
+            if (cell != null && cell.sloppinessExcluded()) {
+                return List.of();
+            }
             if (cell != null && seenCellIds.add(cell.id())) {
                 relevant.add(new RelevantChest(chest.getBlockPos(), cell));
             }
@@ -491,10 +588,11 @@ public final class StorageGuideServer {
 
     private static void announceSloppiness(ServerPlayer player, BlockPos chestPos) {
         long now = System.currentTimeMillis();
+        long cooldownMs = config.sloppinessCooldownSeconds() * 1_000L;
         Long playerLast = lastPlayerSloppinessAnnouncement.get(player.getUUID());
         Long chestLast = lastChestSloppinessAnnouncement.get(chestPos);
-        if ((playerLast != null && now - playerLast < SLOPPINESS_COOLDOWN_MS)
-                || (chestLast != null && now - chestLast < SLOPPINESS_COOLDOWN_MS)) {
+        if ((playerLast != null && now - playerLast < cooldownMs)
+                || (chestLast != null && now - chestLast < cooldownMs)) {
             return;
         }
 
@@ -502,6 +600,58 @@ public final class StorageGuideServer {
         lastChestSloppinessAnnouncement.put(chestPos, now);
         if (activeServer != null) {
             activeServer.getPlayerList().broadcastSystemMessage(Component.literal("Sloppiness detected " + player.getScoreboardName() + "!"), false);
+        }
+    }
+
+    private static void recordSloppiness(ServerPlayer player, RelevantChest chest, ItemStack stack) {
+        config.addSloppinessRecord(StorageGuideConfig.SloppinessRecord.create(
+                player.getUUID(),
+                player.getScoreboardName(),
+                System.currentTimeMillis(),
+                itemId(stack),
+                chest.cell().id(),
+                chest.pos()
+        ));
+        save();
+    }
+
+    private static void clearClientSession(UUID playerId) {
+        clientVersions.remove(playerId);
+        clientHandshakeDeadlines.remove(playerId);
+    }
+
+    private static void refreshClientEnforcement() {
+        clientHandshakeDeadlines.clear();
+        if (!config.forceClientsToUseMod() || activeServer == null) {
+            return;
+        }
+
+        long deadline = System.currentTimeMillis() + CLIENT_HANDSHAKE_GRACE_MS;
+        for (ServerPlayer player : activeServer.getPlayerList().getPlayers()) {
+            if (!clientVersions.containsKey(player.getUUID())) {
+                clientHandshakeDeadlines.put(player.getUUID(), deadline);
+            }
+        }
+    }
+
+    private static void enforceRequiredClients() {
+        if (!config.forceClientsToUseMod() || activeServer == null || clientHandshakeDeadlines.isEmpty()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        List<UUID> expired = clientHandshakeDeadlines.entrySet().stream()
+                .filter(entry -> now >= entry.getValue())
+                .map(Map.Entry::getKey)
+                .toList();
+        for (UUID playerId : expired) {
+            ServerPlayer player = activeServer.getPlayerList().getPlayer(playerId);
+            if (player != null && !clientVersions.containsKey(playerId)) {
+                player.connection.disconnect(Component.literal(
+                        "This server requires the StorageGuide mod. Install a compatible StorageGuide client to join."
+                ));
+            }
+            clientHandshakeDeadlines.remove(playerId);
         }
     }
 

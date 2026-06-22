@@ -1,5 +1,37 @@
 # Changelog
 
+## v2.3.0 - Stable
+
+### Operator Controls
+
+- Added a server setting that can require joining players to have a compatible StorageGuide client.
+- Added a five-second handshake grace period before a client without StorageGuide is disconnected.
+- Added a configurable sloppiness announcement cooldown from 1 to 3600 seconds.
+- Added both settings to the server-authoritative operator menu.
+- Preserved the existing detector toggle and legacy operator-setting packets for older peers.
+
+### Per-Chest Exclusions
+
+- Added an exclusion toggle to each storage-cell editor.
+- Excluded cells retain item assignments and continue to work with lookup.
+- The detector skips excluded cells, including excluded cells within a double chest.
+- Added versioned editor packets so older clients can continue editing item assignments.
+
+### Sloppiness History
+
+- Added persistent records for every newly detected incompatible addition.
+- Records are created before cooldown checks, so suppressed chat warnings remain visible in history.
+- Added a public history menu grouped by player and sorted newest-first within each player.
+- Added `/storageguide history`, available to all players.
+- Added a Sloppiness History button to the client settings screen.
+
+### Migration and Compatibility
+
+- Migrated the server configuration format to version 4.
+- Existing configurations default to force-client enforcement off and a 30-second cooldown.
+- Existing cells remain included in detection.
+- Added V2 packet IDs instead of modifying existing packet codecs.
+
 ## v2.2.0 - Stable
 
 ### Client Settings and Mod Menu

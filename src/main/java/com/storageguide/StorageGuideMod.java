@@ -6,7 +6,7 @@ import net.fabricmc.loader.api.FabricLoader;
 
 public final class StorageGuideMod implements ModInitializer {
     public static final String MOD_ID = "storageguide";
-    public static final int PROTOCOL_VERSION = 2;
+    public static final int PROTOCOL_VERSION = 3;
 
     public static String version() {
         return FabricLoader.getInstance()

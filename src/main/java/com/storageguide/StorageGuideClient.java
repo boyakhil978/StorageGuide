@@ -45,6 +45,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
@@ -112,6 +115,10 @@ public final class StorageGuideClient implements ClientModInitializer {
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR, (payload, context) ->
                 context.client().execute(() -> context.client().setScreen(new CellEditorScreen(payload.cell()))));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR_V2, (payload, context) ->
+                context.client().execute(() -> context.client().setScreen(
+                        new CellEditorScreen(payload.cell(), payload.sloppinessExcluded())
+                )));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.MESSAGE, (payload, context) -> {
         });
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.SERVER_HELLO, (payload, context) ->
@@ -130,6 +137,23 @@ public final class StorageGuideClient implements ClientModInitializer {
                             payload.statusMessage()
                     ));
                 }));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V2, (payload, context) ->
+                context.client().execute(() -> {
+                    Screen current = context.client().screen;
+                    Screen parent = current instanceof OperatorSettingsScreen settings ? settings.parent : current;
+                    context.client().setScreen(new OperatorSettingsScreen(
+                            parent,
+                            payload.canEdit(),
+                            payload.sloppinessDetector(),
+                            payload.forceClientsToUseMod(),
+                            payload.sloppinessCooldownSeconds(),
+                            payload.statusMessage()
+                    ));
+                }));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_SLOPPINESS_HISTORY, (payload, context) ->
+                context.client().execute(() -> context.client().setScreen(
+                        new SloppinessHistoryScreen(context.client().screen, payload.entries())
+                )));
     }
 
     private void onClientTick(Minecraft client) {
@@ -544,7 +568,15 @@ public final class StorageGuideClient implements ClientModInitializer {
                 }
             }).bounds(center - 100, top + 116, 200, 20).build());
 
-            int footerY = top + 158;
+            this.addRenderableWidget(Button.builder(Component.literal("Sloppiness History"), button -> {
+                if (canSend(StorageGuideNetworking.REQUEST_SLOPPINESS_HISTORY)) {
+                    ClientPlayNetworking.send(new StorageGuideNetworking.RequestSloppinessHistoryPayload());
+                } else {
+                    this.operatorStatusMessage = "This server does not support the history menu.";
+                }
+            }).bounds(center - 100, top + 140, 200, 20).build());
+
+            int footerY = top + 182;
             this.addRenderableWidget(Button.builder(Component.literal("Reset"), button -> {
                 this.hotbarStatusEnabled = true;
                 this.highlightColor = StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR;
@@ -603,7 +635,7 @@ public final class StorageGuideClient implements ClientModInitializer {
                         this.font,
                         Component.literal(this.operatorStatusMessage),
                         this.width / 2,
-                        Math.max(38, this.height / 2 - 104) + 141,
+                        Math.max(38, this.height / 2 - 104) + 165,
                         0xFFFFAA55
                 );
             }
@@ -710,6 +742,9 @@ public final class StorageGuideClient implements ClientModInitializer {
         private final boolean canEditSettings;
         private final String statusMessage;
         private boolean sloppinessDetector;
+        private boolean forceClientsToUseMod;
+        private int sloppinessCooldownSeconds;
+        private EditBox cooldownBox;
 
         private OperatorSettingsScreen(
                 Screen parent,
@@ -717,33 +752,73 @@ public final class StorageGuideClient implements ClientModInitializer {
                 boolean sloppinessDetector,
                 String statusMessage
         ) {
+            this(parent, canEditSettings, sloppinessDetector, false, 30, statusMessage);
+        }
+
+        private OperatorSettingsScreen(
+                Screen parent,
+                boolean canEditSettings,
+                boolean sloppinessDetector,
+                boolean forceClientsToUseMod,
+                int sloppinessCooldownSeconds,
+                String statusMessage
+        ) {
             super(Component.literal("StorageGuide Operator Settings"));
             this.parent = parent;
             this.canEditSettings = canEditSettings;
             this.sloppinessDetector = sloppinessDetector;
+            this.forceClientsToUseMod = forceClientsToUseMod;
+            this.sloppinessCooldownSeconds = sloppinessCooldownSeconds;
             this.statusMessage = statusMessage == null ? "" : statusMessage;
         }
 
         @Override
         protected void init() {
             int center = this.width / 2;
-            int top = Math.max(56, this.height / 2 - 48);
+            int top = Math.max(50, this.height / 2 - 82);
             CycleButton<Boolean> detectorButton = CycleButton.onOffBuilder(this.sloppinessDetector)
                     .create(center - 100, top, 200, 20, Component.literal("Sloppiness detector"),
                             (button, enabled) -> this.sloppinessDetector = enabled);
             detectorButton.active = this.canEditSettings;
             this.addRenderableWidget(detectorButton);
+            CycleButton<Boolean> forceClientButton = CycleButton.onOffBuilder(this.forceClientsToUseMod)
+                    .create(center - 100, top + 28, 200, 20, Component.literal("Require StorageGuide clients"),
+                            (button, enabled) -> this.forceClientsToUseMod = enabled);
+            forceClientButton.active = this.canEditSettings;
+            this.addRenderableWidget(forceClientButton);
+
+            this.cooldownBox = new EditBox(
+                    this.font,
+                    center - 100,
+                    top + 56,
+                    200,
+                    20,
+                    Component.literal("Sloppiness cooldown seconds")
+            );
+            this.cooldownBox.setValue(Integer.toString(this.sloppinessCooldownSeconds));
+            this.cooldownBox.setHint(Component.literal("Cooldown seconds (1-3600)"));
+            this.cooldownBox.setMaxLength(4);
+            this.cooldownBox.setEditable(this.canEditSettings);
+            this.addRenderableWidget(this.cooldownBox);
             this.addRenderableWidget(Button.builder(Component.literal("Back"), button -> this.onClose())
-                    .bounds(center - 100, top + 58, 96, 20).build());
+                    .bounds(center - 100, top + 96, 96, 20).build());
             Button saveButton = Button.builder(Component.literal("Save"), button -> {
-                if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS)) {
+                int cooldown = parseCooldown(this.cooldownBox.getValue(), this.sloppinessCooldownSeconds);
+                if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V2)) {
+                    ClientPlayNetworking.send(new StorageGuideNetworking.UpdateOperatorSettingsV2Payload(
+                            this.sloppinessDetector,
+                            this.forceClientsToUseMod,
+                            cooldown
+                    ));
+                } else if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS)) {
                     ClientPlayNetworking.send(new StorageGuideNetworking.UpdateOperatorSettingsPayload(
                             this.sloppinessDetector
                     ));
                 }
-            }).bounds(center + 4, top + 58, 96, 20).build();
+            }).bounds(center + 4, top + 96, 96, 20).build();
             saveButton.active = this.canEditSettings
-                    && canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS);
+                    && (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V2)
+                    || canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS));
             this.addRenderableWidget(saveButton);
         }
 
@@ -765,9 +840,17 @@ public final class StorageGuideClient implements ClientModInitializer {
                         this.font,
                         Component.literal(this.statusMessage),
                         this.width / 2,
-                        Math.max(56, this.height / 2 - 48) + 30,
+                        Math.max(50, this.height / 2 - 82) + 80,
                         this.canEditSettings ? 0xFF55FF55 : 0xFFFFAA55
                 );
+            }
+        }
+
+        private static int parseCooldown(String value, int fallback) {
+            try {
+                return Math.clamp(Integer.parseInt(value), 1, 3600);
+            } catch (NumberFormatException ex) {
+                return fallback;
             }
         }
 
@@ -802,19 +885,129 @@ public final class StorageGuideClient implements ClientModInitializer {
         return luminance >= 128_000 ? 0xFF000000 : 0xFFFFFFFF;
     }
 
+    private static final class SloppinessHistoryScreen extends Screen {
+        private static final int VISIBLE_ENTRIES = 7;
+        private static final DateTimeFormatter TIME_FORMAT =
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
+
+        private final Screen parent;
+        private final List<StorageGuideNetworking.SloppinessHistoryDto> entries;
+        private final List<Button> entryButtons = new ArrayList<>();
+        private Button upButton;
+        private Button downButton;
+        private int scrollOffset;
+
+        private SloppinessHistoryScreen(
+                Screen parent,
+                List<StorageGuideNetworking.SloppinessHistoryDto> entries
+        ) {
+            super(Component.literal("StorageGuide Sloppiness History"));
+            this.parent = parent;
+            this.entries = List.copyOf(entries);
+        }
+
+        @Override
+        protected void init() {
+            int center = this.width / 2;
+            int top = Math.max(40, this.height / 2 - 112);
+            this.entryButtons.clear();
+
+            for (int i = 0; i < VISIBLE_ENTRIES; i++) {
+                Button row = Button.builder(Component.empty(), button -> {
+                }).bounds(center - 150, top + i * 22, 300, 20).build();
+                row.active = false;
+                this.entryButtons.add(row);
+                this.addRenderableWidget(row);
+            }
+
+            this.upButton = Button.builder(Component.literal("Up"), button -> {
+                this.scrollOffset = Math.max(0, this.scrollOffset - VISIBLE_ENTRIES);
+                refreshEntries();
+            }).bounds(center - 150, top + VISIBLE_ENTRIES * 22 + 6, 64, 20).build();
+            this.addRenderableWidget(this.upButton);
+            this.downButton = Button.builder(Component.literal("Down"), button -> {
+                this.scrollOffset = Math.min(maxScroll(), this.scrollOffset + VISIBLE_ENTRIES);
+                refreshEntries();
+            }).bounds(center - 80, top + VISIBLE_ENTRIES * 22 + 6, 64, 20).build();
+            this.addRenderableWidget(this.downButton);
+            this.addRenderableWidget(Button.builder(Component.literal("Back"), button -> this.onClose())
+                    .bounds(center + 86, top + VISIBLE_ENTRIES * 22 + 6, 64, 20).build());
+            refreshEntries();
+        }
+
+        private void refreshEntries() {
+            this.scrollOffset = Math.min(this.scrollOffset, maxScroll());
+            for (int i = 0; i < this.entryButtons.size(); i++) {
+                int index = this.scrollOffset + i;
+                Button row = this.entryButtons.get(i);
+                if (index >= this.entries.size()) {
+                    row.visible = false;
+                    continue;
+                }
+
+                StorageGuideNetworking.SloppinessHistoryDto entry = this.entries.get(index);
+                row.visible = true;
+                row.setMessage(Component.literal(
+                        entry.playerName()
+                                + " • " + cleanItemName(itemPath(entry.itemId()))
+                                + " • " + TIME_FORMAT.format(Instant.ofEpochMilli(entry.timestamp()))
+                ));
+            }
+            this.upButton.active = this.scrollOffset > 0;
+            this.downButton.active = this.scrollOffset < maxScroll();
+        }
+
+        private int maxScroll() {
+            return Math.max(0, this.entries.size() - VISIBLE_ENTRIES);
+        }
+
+        @Override
+        public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            super.extractRenderState(graphics, mouseX, mouseY, delta);
+            graphics.centeredText(this.font, this.title, this.width / 2, 18, 0xFFFFFFFF);
+            graphics.centeredText(
+                    this.font,
+                    Component.literal(this.entries.size() + " recorded instance(s), grouped by player"),
+                    this.width / 2,
+                    29,
+                    0xFFAAAAAA
+            );
+            if (this.entries.isEmpty()) {
+                graphics.centeredText(
+                        this.font,
+                        Component.literal("No sloppiness has been recorded."),
+                        this.width / 2,
+                        this.height / 2,
+                        0xFFAAAAAA
+                );
+            }
+        }
+
+        @Override
+        public void onClose() {
+            this.minecraft.setScreen(this.parent);
+        }
+    }
+
     private static final class CellEditorScreen extends Screen {
-        private static final int VISIBLE_ITEMS = 8;
+        private static final int VISIBLE_ITEMS = 5;
 
         private final StorageGuideNetworking.CellDto cell;
         private final List<ItemOption> itemOptions = availableItemOptions();
         private final List<Button> itemButtons = new ArrayList<>();
         private EditBox searchBox;
         private Set<String> selectedItemIds;
+        private boolean sloppinessExcluded;
         private int scrollOffset;
 
         private CellEditorScreen(StorageGuideNetworking.CellDto cell) {
+            this(cell, false);
+        }
+
+        private CellEditorScreen(StorageGuideNetworking.CellDto cell, boolean sloppinessExcluded) {
             super(Component.literal("StorageGuide Cell " + cell.id()));
             this.cell = cell;
+            this.sloppinessExcluded = sloppinessExcluded;
             this.selectedItemIds = cell.itemIds().stream()
                     .map(StorageGuideClient::normalizeClientItemId)
                     .filter(item -> !item.isBlank())
@@ -824,7 +1017,7 @@ public final class StorageGuideClient implements ClientModInitializer {
         @Override
         protected void init() {
             int center = this.width / 2;
-            int top = Math.max(24, this.height / 2 - 112);
+            int top = Math.max(16, this.height / 2 - 112);
             this.searchBox = new EditBox(this.font, center - 120, top, 240, 20, Component.literal("Search item"));
             this.searchBox.setMaxLength(64);
             this.searchBox.setHint(Component.literal("emerald"));
@@ -851,17 +1044,33 @@ public final class StorageGuideClient implements ClientModInitializer {
                 refreshItems();
             }).bounds(center - 62, top + 28 + VISIBLE_ITEMS * 22, 58, 20).build());
             this.addRenderableWidget(Button.builder(Component.literal("Save"), button -> {
-                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), List.copyOf(this.selectedItemIds)));
+                saveCell(List.copyOf(this.selectedItemIds));
                 this.onClose();
             }).bounds(center + 4, top + 28 + VISIBLE_ITEMS * 22, 56, 20).build());
             this.addRenderableWidget(Button.builder(Component.literal("Clear"), button -> {
-                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), List.of()));
+                saveCell(List.of());
                 this.onClose();
             }).bounds(center + 66, top + 28 + VISIBLE_ITEMS * 22, 54, 20).build());
+            this.addRenderableWidget(CycleButton.onOffBuilder(this.sloppinessExcluded)
+                    .create(center - 120, top + 56 + VISIBLE_ITEMS * 22, 240, 20,
+                            Component.literal("Exclude from sloppiness detection"),
+                            (button, excluded) -> this.sloppinessExcluded = excluded));
             this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
-                    .bounds(center - 40, top + 56 + VISIBLE_ITEMS * 22, 80, 20).build());
+                    .bounds(center - 40, top + 82 + VISIBLE_ITEMS * 22, 80, 20).build());
             this.setInitialFocus(this.searchBox);
             refreshItems();
+        }
+
+        private void saveCell(List<String> itemIds) {
+            if (canSend(StorageGuideNetworking.EDIT_CELL_V2)) {
+                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellV2Payload(
+                        cell.id(),
+                        itemIds,
+                        this.sloppinessExcluded
+                ));
+            } else {
+                ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), itemIds));
+            }
         }
 
         @Override

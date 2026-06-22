@@ -13,15 +13,19 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 public final class StorageGuideConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    int version = 3;
+    int version = 4;
     boolean sloppinessDetector = false;
+    boolean forceClientsToUseMod = false;
+    int sloppinessCooldownSeconds = 30;
     StoredPos topLeft;
     StoredPos bottomRight;
     List<StorageCell> cells = new ArrayList<>();
+    List<SloppinessRecord> sloppinessHistory = new ArrayList<>();
 
     public static StorageGuideConfig load(Path path) {
         if (!Files.exists(path)) {
@@ -38,7 +42,11 @@ public final class StorageGuideConfig {
             if (loaded.cells == null) {
                 loaded.cells = new ArrayList<>();
             }
-            loaded.version = 3;
+            if (loaded.sloppinessHistory == null) {
+                loaded.sloppinessHistory = new ArrayList<>();
+            }
+            loaded.sloppinessCooldownSeconds = clampCooldown(loaded.sloppinessCooldownSeconds);
+            loaded.version = 4;
             loaded.cells.forEach(StorageCell::migrate);
             return loaded;
         } catch (IOException | RuntimeException ex) {
@@ -67,6 +75,40 @@ public final class StorageGuideConfig {
 
     public void setSloppinessDetector(boolean enabled) {
         this.sloppinessDetector = enabled;
+    }
+
+    public boolean forceClientsToUseMod() {
+        return forceClientsToUseMod;
+    }
+
+    public void setForceClientsToUseMod(boolean enabled) {
+        this.forceClientsToUseMod = enabled;
+    }
+
+    public int sloppinessCooldownSeconds() {
+        return clampCooldown(sloppinessCooldownSeconds);
+    }
+
+    public void setSloppinessCooldownSeconds(int seconds) {
+        sloppinessCooldownSeconds = clampCooldown(seconds);
+    }
+
+    public List<SloppinessRecord> sloppinessHistory() {
+        if (sloppinessHistory == null) {
+            sloppinessHistory = new ArrayList<>();
+        }
+        return List.copyOf(sloppinessHistory);
+    }
+
+    public void addSloppinessRecord(SloppinessRecord record) {
+        if (sloppinessHistory == null) {
+            sloppinessHistory = new ArrayList<>();
+        }
+        sloppinessHistory.add(record);
+    }
+
+    private static int clampCooldown(int seconds) {
+        return Math.clamp(seconds <= 0 ? 30 : seconds, 1, 3600);
     }
 
     public void rebuild(BlockPos topLeft, BlockPos bottomRight) {
@@ -111,6 +153,33 @@ public final class StorageGuideConfig {
         }
     }
 
+    public record SloppinessRecord(
+            String playerId,
+            String playerName,
+            long timestamp,
+            String itemId,
+            String cellId,
+            StoredPos chestPos
+    ) {
+        public static SloppinessRecord create(
+                UUID playerId,
+                String playerName,
+                long timestamp,
+                String itemId,
+                String cellId,
+                BlockPos chestPos
+        ) {
+            return new SloppinessRecord(
+                    playerId.toString(),
+                    playerName,
+                    timestamp,
+                    itemId,
+                    cellId,
+                    StoredPos.from(chestPos)
+            );
+        }
+    }
+
     public static final class StorageCell {
         String id;
         StoredPos origin;
@@ -119,6 +188,7 @@ public final class StorageGuideConfig {
         int height = 1;
         String itemId;
         List<String> itemIds = new ArrayList<>();
+        boolean sloppinessExcluded = false;
 
         public String id() {
             return id;
@@ -155,6 +225,14 @@ public final class StorageGuideConfig {
                     .distinct()
                     .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
             this.itemId = null;
+        }
+
+        public boolean sloppinessExcluded() {
+            return sloppinessExcluded;
+        }
+
+        public void setSloppinessExcluded(boolean excluded) {
+            sloppinessExcluded = excluded;
         }
 
         boolean contains(BlockPos pos) {
