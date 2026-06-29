@@ -2,15 +2,15 @@ package com.storageguide.mixin;
 
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.storageguide.StorageGuideClient;
-import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.Hud;
 import net.minecraft.resources.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
-@Mixin(Gui.class)
-public abstract class GuiMixin {
+@Mixin(Hud.class)
+public abstract class HudMixin {
     @Redirect(
             method = "extractItemHotbar",
             at = @At(

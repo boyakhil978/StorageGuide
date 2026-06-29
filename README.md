@@ -32,11 +32,11 @@ StorageGuide also handles packed shulker boxes, stays visible with shader packs 
 
 ## Requirements
 
-- Minecraft `26.1.2`
-- Fabric Loader `0.19.2` or newer
-- Fabric API `0.152.1+26.1.2` or a compatible newer build
+- Minecraft `26.2`
+- Fabric Loader `0.19.3` or newer
+- Fabric API `0.153.0+26.2` or a compatible newer build
 - Java `25` or newer
-- [Mod Menu](https://modrinth.com/mod/modmenu) `18.0.0-beta.1` or newer (optional, recommended for client settings)
+- [Mod Menu](https://modrinth.com/mod/modmenu) `20.0.0-beta.4` or newer (optional, recommended for client settings)
 
 ## Installation
 
@@ -230,8 +230,8 @@ The distributable jar is written to `build/libs/storageguide-<version>.jar`.
 
 ## Releases, Source, and License
 
-- Current development version: `v2.4.0`
-- Latest stable release: `v2.3.0`
+- Current development version: `v2.4.1`
+- Latest stable release: `v2.4.1`
 - Download: https://modrinth.com/mod/storageguide
 - Stable tags: `vX.Y.Z`
 - Beta tags: `vX.Y.Z-beta.N`

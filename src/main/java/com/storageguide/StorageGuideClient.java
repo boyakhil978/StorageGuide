@@ -5,8 +5,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -95,7 +95,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         registerReceivers();
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
-        LevelRenderEvents.AFTER_BLOCK_OUTLINE_EXTRACTION.register(this::extractHighlights);
+        LevelExtractionEvents.AFTER_BLOCK_OUTLINE_EXTRACTION.register(this::extractHighlights);
     }
 
     private KeyMapping registerKey(String name, int defaultKey) {
@@ -105,6 +105,14 @@ public final class StorageGuideClient implements ClientModInitializer {
                 defaultKey,
                 this.category
         ));
+    }
+
+    private static Screen currentScreen(Minecraft client) {
+        return client.gui.screen();
+    }
+
+    private static void showScreen(Minecraft client, Screen screen) {
+        client.gui.setScreen(screen);
     }
 
     private static void registerReceivers() {
@@ -125,16 +133,16 @@ public final class StorageGuideClient implements ClientModInitializer {
                     }, () -> activeHighlight = null);
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_CLIENT_SETTINGS, (payload, context) ->
-                context.client().execute(() -> openClientSettings(context.client().screen)));
+                context.client().execute(() -> openClientSettings(currentScreen(context.client()))));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR, (payload, context) ->
-                context.client().execute(() -> context.client().setScreen(new CellEditorScreen(payload.cell()))));
+                context.client().execute(() -> showScreen(context.client(), new CellEditorScreen(payload.cell()))));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR_V2, (payload, context) ->
-                context.client().execute(() -> context.client().setScreen(
+                context.client().execute(() -> showScreen(context.client(),
                         new CellEditorScreen(payload.cell(), payload.sloppinessExcluded())
                 )));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.CELL_EDIT_STATUS, (payload, context) ->
                 context.client().execute(() -> {
-                    if (context.client().screen instanceof CellEditorScreen editor) {
+                    if (currentScreen(context.client()) instanceof CellEditorScreen editor) {
                         editor.setStatus(payload.cellId(), payload.success(), payload.message());
                     }
                 }));
@@ -157,9 +165,9 @@ public final class StorageGuideClient implements ClientModInitializer {
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS, (payload, context) ->
                 context.client().execute(() -> {
-                    Screen current = context.client().screen;
+                    Screen current = currentScreen(context.client());
                     Screen parent = current instanceof OperatorSettingsScreen settings ? settings.parent : current;
-                    context.client().setScreen(new OperatorSettingsScreen(
+                    showScreen(context.client(), new OperatorSettingsScreen(
                             parent,
                             payload.canEdit(),
                             payload.sloppinessDetector(),
@@ -168,9 +176,9 @@ public final class StorageGuideClient implements ClientModInitializer {
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V2, (payload, context) ->
                 context.client().execute(() -> {
-                    Screen current = context.client().screen;
+                    Screen current = currentScreen(context.client());
                     Screen parent = current instanceof OperatorSettingsScreen settings ? settings.parent : current;
-                    context.client().setScreen(new OperatorSettingsScreen(
+                    showScreen(context.client(), new OperatorSettingsScreen(
                             parent,
                             payload.canEdit(),
                             payload.sloppinessDetector(),
@@ -181,9 +189,9 @@ public final class StorageGuideClient implements ClientModInitializer {
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V3, (payload, context) ->
                 context.client().execute(() -> {
-                    Screen current = context.client().screen;
+                    Screen current = currentScreen(context.client());
                     Screen parent = current instanceof OperatorSettingsScreen settings ? settings.parent : current;
-                    context.client().setScreen(new OperatorSettingsScreen(
+                    showScreen(context.client(), new OperatorSettingsScreen(
                             parent,
                             payload.canEdit(),
                             payload.bigBrotherEnabled(),
@@ -194,8 +202,8 @@ public final class StorageGuideClient implements ClientModInitializer {
                     ));
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_SLOPPINESS_HISTORY, (payload, context) ->
-                context.client().execute(() -> context.client().setScreen(
-                        new SloppinessHistoryScreen(context.client().screen, payload.entries())
+                context.client().execute(() -> showScreen(context.client(),
+                        new SloppinessHistoryScreen(currentScreen(context.client()), payload.entries())
                 )));
     }
 
@@ -205,7 +213,8 @@ public final class StorageGuideClient implements ClientModInitializer {
             return;
         }
 
-        if (client.screen != null && !(client.screen instanceof CellEditorScreen) && !(client.screen instanceof FindItemScreen)) {
+        Screen currentScreen = currentScreen(client);
+        if (currentScreen != null && !(currentScreen instanceof CellEditorScreen) && !(currentScreen instanceof FindItemScreen)) {
             clearEditState();
         }
 
@@ -242,7 +251,7 @@ public final class StorageGuideClient implements ClientModInitializer {
             if (canSend(StorageGuideNetworking.OPEN_FIND)) {
                 ClientPlayNetworking.send(new StorageGuideNetworking.OpenFindPayload());
             }
-            client.setScreen(new FindItemScreen());
+            showScreen(client, new FindItemScreen());
         }
 
         if (System.currentTimeMillis() > activeHighlightUntilMs) {
@@ -474,7 +483,7 @@ public final class StorageGuideClient implements ClientModInitializer {
     private static boolean hotbarStatusActive(Minecraft client) {
         if (clientConfig == null
                 || !clientConfig.hotbarStatusEnabled()
-                || client.options.hideGui
+                || client.gui.hud.isHidden()
                 || client.player == null
                 || client.gameMode == null
                 || client.player.isSpectator()
@@ -543,10 +552,15 @@ public final class StorageGuideClient implements ClientModInitializer {
     }
 
     public static void openClientSettings(Screen parent) {
-        Minecraft.getInstance().setScreen(createConfigScreen(parent));
+        showScreen(Minecraft.getInstance(), createConfigScreen(parent));
     }
 
     private static final class ClientSettingsScreen extends Screen {
+        private static final int PANEL_MAX_HEIGHT = 330;
+        private static final int PANEL_MARGIN = 18;
+        private static final int SCROLL_STEP = 24;
+        private static final int HEADER_HEIGHT = 34;
+        private static final int PANEL_BOTTOM_PADDING = 8;
         private final Screen parent;
         private boolean hotbarStatusEnabled;
         private int highlightColor;
@@ -554,6 +568,7 @@ public final class StorageGuideClient implements ClientModInitializer {
         private int missingHotbarColor;
         private String operatorStatusMessage = "";
         private KeyMapping listeningForKey;
+        private int scrollOffset;
 
         private ClientSettingsScreen(Screen parent) {
             super(Component.literal("StorageGuide Settings"));
@@ -576,34 +591,35 @@ public final class StorageGuideClient implements ClientModInitializer {
             int center = this.width / 2;
             int panelWidth = Math.min(340, this.width - 32);
             int left = center - panelWidth / 2;
-            int top = Math.max(18, this.height / 2 - 152);
+            int top = panelTop();
+            this.scrollOffset = Math.min(this.scrollOffset, maxScroll());
 
-            this.addRenderableWidget(withTooltip(CycleButton.onOffBuilder(this.hotbarStatusEnabled)
-                            .create(left + 12, top + 34, panelWidth - 24, 20, Component.literal("Hotbar item status"),
+            addScrollableWidget(withTooltip(CycleButton.onOffBuilder(this.hotbarStatusEnabled)
+                            .create(left + 12, contentY(34), panelWidth - 24, 20, Component.literal("Hotbar item status"),
                                     (button, enabled) -> this.hotbarStatusEnabled = enabled),
                     "Briefly recolors the selected hotbar frame after using Locate Held Item."));
 
-            this.addRenderableWidget(colorButton(
+            addScrollableWidget(colorButton(
                     left + 12,
-                    top + 62,
+                    contentY(62),
                     panelWidth - 24,
                     "Located chest highlight",
                     this.highlightColor,
                     StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR,
                     color -> this.highlightColor = color
             ));
-            this.addRenderableWidget(colorButton(
+            addScrollableWidget(colorButton(
                     left + 12,
-                    top + 90,
+                    contentY(90),
                     panelWidth - 24,
                     "Found item hotbar",
                     this.foundHotbarColor,
                     StorageGuideClientConfig.DEFAULT_FOUND_HOTBAR_COLOR,
                     color -> this.foundHotbarColor = color
             ));
-            this.addRenderableWidget(colorButton(
+            addScrollableWidget(colorButton(
                     left + 12,
-                    top + 118,
+                    contentY(118),
                     panelWidth - 24,
                     "Missing item hotbar",
                     this.missingHotbarColor,
@@ -611,32 +627,32 @@ public final class StorageGuideClient implements ClientModInitializer {
                     color -> this.missingHotbarColor = color
             ));
 
-            this.addRenderableWidget(keyButton(
+            addScrollableWidget(keyButton(
                     left + 12,
-                    top + 150,
+                    contentY(150),
                     panelWidth - 24,
                     "Select/Edit grid",
                     selectOrEditMapping,
                     "Change the key used to create a grid, show the edit overlay, and open a cell editor."
             ));
-            this.addRenderableWidget(keyButton(
+            addScrollableWidget(keyButton(
                     left + 12,
-                    top + 174,
+                    contentY(174),
                     panelWidth - 24,
                     "Locate held item",
                     locateHeldMapping,
                     "Change the key used to locate the item in your hand."
             ));
-            this.addRenderableWidget(keyButton(
+            addScrollableWidget(keyButton(
                     left + 12,
-                    top + 198,
+                    contentY(198),
                     panelWidth - 24,
                     "Open item finder",
                     findMenuMapping,
                     "Change the key used to open the live item finder."
             ));
 
-            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Operator Settings"), button -> {
+            addScrollableWidget(withTooltip(Button.builder(Component.literal("Operator Settings"), button -> {
                 if (canSend(StorageGuideNetworking.REQUEST_OPERATOR_SETTINGS)) {
                     this.operatorStatusMessage = canEdit
                             ? "Loading operator settings..."
@@ -645,20 +661,20 @@ public final class StorageGuideClient implements ClientModInitializer {
                 } else {
                     this.operatorStatusMessage = "This server does not support the operator settings menu.";
                 }
-            }).bounds(left + 12, top + 230, panelWidth - 24, 20).build(),
+            }).bounds(left + 12, contentY(230), panelWidth - 24, 20).build(),
                     "Open server-owned settings such as Big Brother, cooldowns, templates, and client requirements."));
 
-            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Big Brother History"), button -> {
+            addScrollableWidget(withTooltip(Button.builder(Component.literal("Big Brother History"), button -> {
                 if (canSend(StorageGuideNetworking.REQUEST_SLOPPINESS_HISTORY)) {
                     ClientPlayNetworking.send(new StorageGuideNetworking.RequestSloppinessHistoryPayload());
                 } else {
                     this.operatorStatusMessage = "This server does not support the Big Brother history menu.";
                 }
-            }).bounds(left + 12, top + 254, panelWidth - 24, 20).build(),
+            }).bounds(left + 12, contentY(254), panelWidth - 24, 20).build(),
                     "Open the public list of Big Brother events grouped by player."));
 
-            int footerY = top + 296;
-            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Reset"), button -> {
+            int footerY = contentY(296);
+            addScrollableWidget(withTooltip(Button.builder(Component.literal("Reset"), button -> {
                 this.hotbarStatusEnabled = true;
                 this.highlightColor = StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR;
                 this.foundHotbarColor = StorageGuideClientConfig.DEFAULT_FOUND_HOTBAR_COLOR;
@@ -666,10 +682,10 @@ public final class StorageGuideClient implements ClientModInitializer {
                 this.rebuildWidgets();
             }).bounds(left + 12, footerY, 76, 20).build(),
                     "Restore StorageGuide's default client colors and hotbar indicator setting."));
-            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Cancel"), button -> this.onClose())
+            addScrollableWidget(withTooltip(Button.builder(Component.literal("Cancel"), button -> this.onClose())
                     .bounds(center - 38, footerY, 76, 20).build(),
                     "Discard unsaved color and hotbar-status changes."));
-            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Save"), button -> {
+            addScrollableWidget(withTooltip(Button.builder(Component.literal("Save"), button -> {
                 clientConfig.update(
                         this.hotbarStatusEnabled,
                         this.highlightColor,
@@ -691,7 +707,7 @@ public final class StorageGuideClient implements ClientModInitializer {
                 Consumer<Integer> setter
         ) {
             return withTooltip(Button.builder(colorLabel(label, color), button ->
-                    this.minecraft.setScreen(new ColorPickerScreen(
+                    showScreen(this.minecraft, new ColorPickerScreen(
                             this,
                             label,
                             color,
@@ -715,6 +731,60 @@ public final class StorageGuideClient implements ClientModInitializer {
             }).bounds(x, y, width, 20).build();
             button.active = mapping != null;
             return withTooltip(button, tooltip);
+        }
+
+        private <T extends AbstractWidget> T addScrollableWidget(T widget) {
+            boolean inViewport = isInScrollViewport(widget.getY(), widget.getHeight());
+            widget.visible = inViewport;
+            widget.active = widget.active && inViewport;
+            return this.addRenderableWidget(widget);
+        }
+
+        private int panelHeight() {
+            return Math.min(PANEL_MAX_HEIGHT, Math.max(220, this.height - PANEL_MARGIN * 2));
+        }
+
+        private int panelTop() {
+            return Math.max(PANEL_MARGIN, (this.height - panelHeight()) / 2);
+        }
+
+        private int contentY(int originalOffset) {
+            return panelTop() + originalOffset - this.scrollOffset;
+        }
+
+        private int scrollViewportTop() {
+            return panelTop() + HEADER_HEIGHT;
+        }
+
+        private int scrollViewportBottom() {
+            return panelTop() + panelHeight() - PANEL_BOTTOM_PADDING;
+        }
+
+        private boolean isInScrollViewport(int y, int height) {
+            return y >= scrollViewportTop() && y + height <= scrollViewportBottom();
+        }
+
+        private int maxScroll() {
+            return Math.max(0, PANEL_MAX_HEIGHT - panelHeight());
+        }
+
+        @Override
+        public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+            int maxScroll = maxScroll();
+            if (maxScroll <= 0) {
+                return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+            }
+            if (scrollY > 0) {
+                this.scrollOffset = Math.max(0, this.scrollOffset - SCROLL_STEP);
+                this.rebuildWidgets();
+                return true;
+            }
+            if (scrollY < 0) {
+                this.scrollOffset = Math.min(maxScroll, this.scrollOffset + SCROLL_STEP);
+                this.rebuildWidgets();
+                return true;
+            }
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
         }
 
         @Override
@@ -761,8 +831,9 @@ public final class StorageGuideClient implements ClientModInitializer {
             int center = this.width / 2;
             int panelWidth = Math.min(340, this.width - 32);
             int left = center - panelWidth / 2;
-            int top = Math.max(18, this.height / 2 - 152);
-            drawPanel(graphics, left, top, panelWidth, 330);
+            int top = panelTop();
+            int panelHeight = panelHeight();
+            drawPanel(graphics, left, top, panelWidth, panelHeight);
             super.extractRenderState(graphics, mouseX, mouseY, delta);
             graphics.centeredText(this.font, this.title, this.width / 2, top + 8, 0xFFFFFFFF);
             graphics.centeredText(
@@ -772,20 +843,22 @@ public final class StorageGuideClient implements ClientModInitializer {
                     top + 21,
                     0xFFAAAAAA
             );
-            if (!this.operatorStatusMessage.isBlank()) {
+            int statusY = contentY(280);
+            if (!this.operatorStatusMessage.isBlank() && isInScrollViewport(statusY, 9)) {
                 graphics.centeredText(
                         this.font,
                         Component.literal(this.operatorStatusMessage),
                         this.width / 2,
-                        top + 280,
+                        statusY,
                         0xFFFFAA55
                 );
             }
+            drawScrollbar(graphics, left + panelWidth - 8, scrollViewportTop(), scrollViewportBottom() - scrollViewportTop(), PANEL_MAX_HEIGHT, panelHeight, this.scrollOffset);
         }
 
         @Override
         public void onClose() {
-            this.minecraft.setScreen(this.parent);
+            showScreen(this.minecraft, this.parent);
         }
     }
 
@@ -848,7 +921,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         @Override
         public void onClose() {
-            this.minecraft.setScreen(this.parent);
+            showScreen(this.minecraft, this.parent);
         }
     }
 
@@ -1071,7 +1144,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         @Override
         public void onClose() {
-            this.minecraft.setScreen(this.parent);
+            showScreen(this.minecraft, this.parent);
         }
     }
 
@@ -1230,7 +1303,7 @@ public final class StorageGuideClient implements ClientModInitializer {
         private void openVisiblePlayer(int rowIndex) {
             int index = this.scrollOffset + rowIndex;
             if (index >= 0 && index < this.groups.size()) {
-                this.minecraft.setScreen(new BigBrotherPlayerHistoryScreen(this, this.groups.get(index)));
+                showScreen(this.minecraft, new BigBrotherPlayerHistoryScreen(this, this.groups.get(index)));
             }
         }
 
@@ -1276,7 +1349,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         @Override
         public void onClose() {
-            this.minecraft.setScreen(this.parent);
+            showScreen(this.minecraft, this.parent);
         }
     }
 
@@ -1382,7 +1455,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         @Override
         public void onClose() {
-            this.minecraft.setScreen(this.parent);
+            showScreen(this.minecraft, this.parent);
         }
     }
 
@@ -1553,7 +1626,7 @@ public final class StorageGuideClient implements ClientModInitializer {
         @Override
         public void onClose() {
             clearEditState();
-            Minecraft.getInstance().setScreen(null);
+            showScreen(Minecraft.getInstance(), null);
         }
 
         private void refreshItems() {
@@ -1818,7 +1891,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         @Override
         public void onClose() {
-            Minecraft.getInstance().setScreen(null);
+            showScreen(Minecraft.getInstance(), null);
         }
     }
 

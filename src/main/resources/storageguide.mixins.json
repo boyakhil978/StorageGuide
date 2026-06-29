@@ -7,7 +7,7 @@
     "CompoundContainerAccessor"
   ],
   "client": [
-    "GuiMixin",
+    "HudMixin",
     "PauseScreenMixin"
   ],
   "injectors": {
