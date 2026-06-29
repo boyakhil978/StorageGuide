@@ -10,12 +10,15 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -27,6 +30,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
@@ -45,6 +49,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -56,6 +61,9 @@ public final class StorageGuideClient implements ClientModInitializer {
     private KeyMapping selectOrEditKey;
     private KeyMapping locateHeldKey;
     private KeyMapping findMenuKey;
+    private static KeyMapping selectOrEditMapping;
+    private static KeyMapping locateHeldMapping;
+    private static KeyMapping findMenuMapping;
 
     private static boolean hasGrid;
     private static boolean canEdit;
@@ -81,6 +89,9 @@ public final class StorageGuideClient implements ClientModInitializer {
         this.selectOrEditKey = registerKey("select_or_edit", GLFW.GLFW_KEY_LEFT_BRACKET);
         this.locateHeldKey = registerKey("locate_held_item", GLFW.GLFW_KEY_GRAVE_ACCENT);
         this.findMenuKey = registerKey("find_menu", GLFW.GLFW_KEY_O);
+        selectOrEditMapping = this.selectOrEditKey;
+        locateHeldMapping = this.locateHeldKey;
+        findMenuMapping = this.findMenuKey;
 
         registerReceivers();
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
@@ -113,18 +124,36 @@ public final class StorageGuideClient implements ClientModInitializer {
                         activeHighlightUntilMs = System.currentTimeMillis() + 8000L;
                     }, () -> activeHighlight = null);
                 }));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_CLIENT_SETTINGS, (payload, context) ->
+                context.client().execute(() -> openClientSettings(context.client().screen)));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR, (payload, context) ->
                 context.client().execute(() -> context.client().setScreen(new CellEditorScreen(payload.cell()))));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_EDITOR_V2, (payload, context) ->
                 context.client().execute(() -> context.client().setScreen(
                         new CellEditorScreen(payload.cell(), payload.sloppinessExcluded())
                 )));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.CELL_EDIT_STATUS, (payload, context) ->
+                context.client().execute(() -> {
+                    if (context.client().screen instanceof CellEditorScreen editor) {
+                        editor.setStatus(payload.cellId(), payload.success(), payload.message());
+                    }
+                }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.MESSAGE, (payload, context) -> {
         });
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.SERVER_HELLO, (payload, context) ->
                 context.client().execute(() -> {
                     serverVersion = payload.version();
                     serverProtocolVersion = payload.protocolVersion();
+                    if (StorageGuideMod.compareVersions(StorageGuideMod.version(), serverVersion) < 0) {
+                        message(
+                                context.client(),
+                                "Your StorageGuide client is older than this server (client "
+                                        + StorageGuideMod.version()
+                                        + ", server "
+                                        + serverVersion
+                                        + "). Please upgrade StorageGuide for the best compatibility."
+                        );
+                    }
                 }));
         ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS, (payload, context) ->
                 context.client().execute(() -> {
@@ -147,6 +176,20 @@ public final class StorageGuideClient implements ClientModInitializer {
                             payload.sloppinessDetector(),
                             payload.forceClientsToUseMod(),
                             payload.sloppinessCooldownSeconds(),
+                            payload.statusMessage()
+                    ));
+                }));
+        ClientPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V3, (payload, context) ->
+                context.client().execute(() -> {
+                    Screen current = context.client().screen;
+                    Screen parent = current instanceof OperatorSettingsScreen settings ? settings.parent : current;
+                    context.client().setScreen(new OperatorSettingsScreen(
+                            parent,
+                            payload.canEdit(),
+                            payload.bigBrotherEnabled(),
+                            payload.forceClientsToUseMod(),
+                            payload.announcementCooldownSeconds(),
+                            payload.bigBrotherMessages(),
                             payload.statusMessage()
                     ));
                 }));
@@ -499,6 +542,10 @@ public final class StorageGuideClient implements ClientModInitializer {
         return new ClientSettingsScreen(parent);
     }
 
+    public static void openClientSettings(Screen parent) {
+        Minecraft.getInstance().setScreen(createConfigScreen(parent));
+    }
+
     private static final class ClientSettingsScreen extends Screen {
         private final Screen parent;
         private boolean hotbarStatusEnabled;
@@ -506,6 +553,7 @@ public final class StorageGuideClient implements ClientModInitializer {
         private int foundHotbarColor;
         private int missingHotbarColor;
         private String operatorStatusMessage = "";
+        private KeyMapping listeningForKey;
 
         private ClientSettingsScreen(Screen parent) {
             super(Component.literal("StorageGuide Settings"));
@@ -526,38 +574,69 @@ public final class StorageGuideClient implements ClientModInitializer {
         @Override
         protected void init() {
             int center = this.width / 2;
-            int top = Math.max(38, this.height / 2 - 104);
+            int panelWidth = Math.min(340, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(18, this.height / 2 - 152);
 
-            this.addRenderableWidget(CycleButton.onOffBuilder(this.hotbarStatusEnabled)
-                    .create(center - 100, top, 200, 20, Component.literal("Hotbar item status"),
-                            (button, enabled) -> this.hotbarStatusEnabled = enabled));
+            this.addRenderableWidget(withTooltip(CycleButton.onOffBuilder(this.hotbarStatusEnabled)
+                            .create(left + 12, top + 34, panelWidth - 24, 20, Component.literal("Hotbar item status"),
+                                    (button, enabled) -> this.hotbarStatusEnabled = enabled),
+                    "Briefly recolors the selected hotbar frame after using Locate Held Item."));
 
             this.addRenderableWidget(colorButton(
-                    center,
-                    top + 28,
+                    left + 12,
+                    top + 62,
+                    panelWidth - 24,
                     "Located chest highlight",
                     this.highlightColor,
                     StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR,
                     color -> this.highlightColor = color
             ));
             this.addRenderableWidget(colorButton(
-                    center,
-                    top + 56,
+                    left + 12,
+                    top + 90,
+                    panelWidth - 24,
                     "Found item hotbar",
                     this.foundHotbarColor,
                     StorageGuideClientConfig.DEFAULT_FOUND_HOTBAR_COLOR,
                     color -> this.foundHotbarColor = color
             ));
             this.addRenderableWidget(colorButton(
-                    center,
-                    top + 84,
+                    left + 12,
+                    top + 118,
+                    panelWidth - 24,
                     "Missing item hotbar",
                     this.missingHotbarColor,
                     StorageGuideClientConfig.DEFAULT_MISSING_HOTBAR_COLOR,
                     color -> this.missingHotbarColor = color
             ));
 
-            this.addRenderableWidget(Button.builder(Component.literal("Operator Settings"), button -> {
+            this.addRenderableWidget(keyButton(
+                    left + 12,
+                    top + 150,
+                    panelWidth - 24,
+                    "Select/Edit grid",
+                    selectOrEditMapping,
+                    "Change the key used to create a grid, show the edit overlay, and open a cell editor."
+            ));
+            this.addRenderableWidget(keyButton(
+                    left + 12,
+                    top + 174,
+                    panelWidth - 24,
+                    "Locate held item",
+                    locateHeldMapping,
+                    "Change the key used to locate the item in your hand."
+            ));
+            this.addRenderableWidget(keyButton(
+                    left + 12,
+                    top + 198,
+                    panelWidth - 24,
+                    "Open item finder",
+                    findMenuMapping,
+                    "Change the key used to open the live item finder."
+            ));
+
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Operator Settings"), button -> {
                 if (canSend(StorageGuideNetworking.REQUEST_OPERATOR_SETTINGS)) {
                     this.operatorStatusMessage = canEdit
                             ? "Loading operator settings..."
@@ -566,27 +645,31 @@ public final class StorageGuideClient implements ClientModInitializer {
                 } else {
                     this.operatorStatusMessage = "This server does not support the operator settings menu.";
                 }
-            }).bounds(center - 100, top + 116, 200, 20).build());
+            }).bounds(left + 12, top + 230, panelWidth - 24, 20).build(),
+                    "Open server-owned settings such as Big Brother, cooldowns, templates, and client requirements."));
 
-            this.addRenderableWidget(Button.builder(Component.literal("Sloppiness History"), button -> {
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Big Brother History"), button -> {
                 if (canSend(StorageGuideNetworking.REQUEST_SLOPPINESS_HISTORY)) {
                     ClientPlayNetworking.send(new StorageGuideNetworking.RequestSloppinessHistoryPayload());
                 } else {
-                    this.operatorStatusMessage = "This server does not support the history menu.";
+                    this.operatorStatusMessage = "This server does not support the Big Brother history menu.";
                 }
-            }).bounds(center - 100, top + 140, 200, 20).build());
+            }).bounds(left + 12, top + 254, panelWidth - 24, 20).build(),
+                    "Open the public list of Big Brother events grouped by player."));
 
-            int footerY = top + 182;
-            this.addRenderableWidget(Button.builder(Component.literal("Reset"), button -> {
+            int footerY = top + 296;
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Reset"), button -> {
                 this.hotbarStatusEnabled = true;
                 this.highlightColor = StorageGuideClientConfig.DEFAULT_HIGHLIGHT_COLOR;
                 this.foundHotbarColor = StorageGuideClientConfig.DEFAULT_FOUND_HOTBAR_COLOR;
                 this.missingHotbarColor = StorageGuideClientConfig.DEFAULT_MISSING_HOTBAR_COLOR;
                 this.rebuildWidgets();
-            }).bounds(center - 100, footerY, 62, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
-                    .bounds(center - 31, footerY, 62, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Save"), button -> {
+            }).bounds(left + 12, footerY, 76, 20).build(),
+                    "Restore StorageGuide's default client colors and hotbar indicator setting."));
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Cancel"), button -> this.onClose())
+                    .bounds(center - 38, footerY, 76, 20).build(),
+                    "Discard unsaved color and hotbar-status changes."));
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Save"), button -> {
                 clientConfig.update(
                         this.hotbarStatusEnabled,
                         this.highlightColor,
@@ -594,18 +677,20 @@ public final class StorageGuideClient implements ClientModInitializer {
                         this.missingHotbarColor
                 );
                 this.onClose();
-            }).bounds(center + 38, footerY, 62, 20).build());
+            }).bounds(left + panelWidth - 88, footerY, 76, 20).build(),
+                    "Save client-only StorageGuide display settings."));
         }
 
         private Button colorButton(
-                int center,
+                int x,
                 int y,
+                int width,
                 String label,
                 int color,
                 int defaultColor,
                 Consumer<Integer> setter
         ) {
-            return Button.builder(colorLabel(label, color), button ->
+            return withTooltip(Button.builder(colorLabel(label, color), button ->
                     this.minecraft.setScreen(new ColorPickerScreen(
                             this,
                             label,
@@ -616,18 +701,75 @@ public final class StorageGuideClient implements ClientModInitializer {
                                 this.rebuildWidgets();
                             }
                     ))
-            ).bounds(center - 100, y, 200, 20).build();
+            ).bounds(x, y, width, 20).build(),
+                    "Change " + label.toLowerCase(Locale.ROOT) + " color.");
+        }
+
+        private Button keyButton(int x, int y, int width, String label, KeyMapping mapping, String tooltip) {
+            String key = mapping == null ? "Unavailable" : mapping.getTranslatedKeyMessage().getString();
+            Component message = Component.literal((mapping == this.listeningForKey ? "Press a key for " : label + ": ") + key);
+            Button button = Button.builder(message, clicked -> {
+                this.listeningForKey = mapping;
+                this.operatorStatusMessage = "Press a key or mouse button for " + label + ". Esc cancels; Backspace clears.";
+                this.rebuildWidgets();
+            }).bounds(x, y, width, 20).build();
+            button.active = mapping != null;
+            return withTooltip(button, tooltip);
+        }
+
+        @Override
+        public boolean keyPressed(KeyEvent event) {
+            if (this.listeningForKey != null) {
+                if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+                    this.listeningForKey = null;
+                    this.operatorStatusMessage = "Keybind change cancelled.";
+                    this.rebuildWidgets();
+                    return true;
+                }
+
+                InputConstants.Key key = event.key() == GLFW.GLFW_KEY_BACKSPACE || event.key() == GLFW.GLFW_KEY_DELETE
+                        ? InputConstants.UNKNOWN
+                        : InputConstants.getKey(event);
+                applyKeybind(key);
+                return true;
+            }
+            return super.keyPressed(event);
+        }
+
+        @Override
+        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+            if (this.listeningForKey != null) {
+                applyKeybind(InputConstants.Type.MOUSE.getOrCreate(event.button()));
+                return true;
+            }
+            return super.mouseClicked(event, doubleClick);
+        }
+
+        private void applyKeybind(InputConstants.Key key) {
+            this.listeningForKey.setKey(key);
+            KeyMapping.resetMapping();
+            if (this.minecraft != null) {
+                this.minecraft.options.save();
+            }
+            this.operatorStatusMessage = "Keybind saved as " + this.listeningForKey.getTranslatedKeyMessage().getString() + ".";
+            this.listeningForKey = null;
+            this.rebuildWidgets();
         }
 
         @Override
         public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            int center = this.width / 2;
+            int panelWidth = Math.min(340, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(18, this.height / 2 - 152);
+            drawPanel(graphics, left, top, panelWidth, 330);
             super.extractRenderState(graphics, mouseX, mouseY, delta);
-            graphics.centeredText(this.font, this.title, this.width / 2, 18, 0xFFFFFFFF);
+            graphics.centeredText(this.font, this.title, this.width / 2, top + 8, 0xFFFFFFFF);
             graphics.centeredText(
                     this.font,
                     Component.literal("Colors are saved per client."),
                     this.width / 2,
-                    29,
+                    top + 21,
                     0xFFAAAAAA
             );
             if (!this.operatorStatusMessage.isBlank()) {
@@ -635,7 +777,7 @@ public final class StorageGuideClient implements ClientModInitializer {
                         this.font,
                         Component.literal(this.operatorStatusMessage),
                         this.width / 2,
-                        Math.max(38, this.height / 2 - 104) + 165,
+                        top + 280,
                         0xFFFFAA55
                 );
             }
@@ -668,29 +810,29 @@ public final class StorageGuideClient implements ClientModInitializer {
             int center = this.width / 2;
             int top = Math.max(48, this.height / 2 - 88);
 
-            this.addRenderableWidget(new ColorSlider(
+            this.addRenderableWidget(withTooltip(new ColorSlider(
                     center - 100, top, 200, "Red", red(this.color),
                     value -> this.color = (this.color & 0x00FFFF) | (value << 16)
-            ));
-            this.addRenderableWidget(new ColorSlider(
+            ), "Adjust the red channel for this StorageGuide color."));
+            this.addRenderableWidget(withTooltip(new ColorSlider(
                     center - 100, top + 28, 200, "Green", green(this.color),
                     value -> this.color = (this.color & 0xFF00FF) | (value << 8)
-            ));
-            this.addRenderableWidget(new ColorSlider(
+            ), "Adjust the green channel for this StorageGuide color."));
+            this.addRenderableWidget(withTooltip(new ColorSlider(
                     center - 100, top + 56, 200, "Blue", blue(this.color),
                     value -> this.color = (this.color & 0xFFFF00) | value
-            ));
+            ), "Adjust the blue channel for this StorageGuide color."));
 
-            this.addRenderableWidget(Button.builder(Component.literal("Default"), button -> {
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Default"), button -> {
                 this.color = this.defaultColor;
                 this.rebuildWidgets();
-            }).bounds(center - 100, top + 126, 62, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
-                    .bounds(center - 31, top + 126, 62, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Apply"), button -> {
+            }).bounds(center - 100, top + 126, 62, 20).build(), "Restore this color to the StorageGuide default."));
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Cancel"), button -> this.onClose())
+                    .bounds(center - 31, top + 126, 62, 20).build(), "Return without applying this color."));
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Apply"), button -> {
                 this.onSave.accept(this.color);
                 this.onClose();
-            }).bounds(center + 38, top + 126, 62, 20).build());
+            }).bounds(center + 38, top + 126, 62, 20).build(), "Apply this color to the previous settings screen."));
         }
 
         @Override
@@ -744,7 +886,9 @@ public final class StorageGuideClient implements ClientModInitializer {
         private boolean sloppinessDetector;
         private boolean forceClientsToUseMod;
         private int sloppinessCooldownSeconds;
+        private List<String> bigBrotherMessages;
         private EditBox cooldownBox;
+        private EditBox messagesBox;
 
         private OperatorSettingsScreen(
                 Screen parent,
@@ -763,48 +907,94 @@ public final class StorageGuideClient implements ClientModInitializer {
                 int sloppinessCooldownSeconds,
                 String statusMessage
         ) {
+            this(
+                    parent,
+                    canEditSettings,
+                    sloppinessDetector,
+                    forceClientsToUseMod,
+                    sloppinessCooldownSeconds,
+                    List.of("Big Brother caught {playername} slacking off."),
+                    statusMessage
+            );
+        }
+
+        private OperatorSettingsScreen(
+                Screen parent,
+                boolean canEditSettings,
+                boolean sloppinessDetector,
+                boolean forceClientsToUseMod,
+                int sloppinessCooldownSeconds,
+                List<String> bigBrotherMessages,
+                String statusMessage
+        ) {
             super(Component.literal("StorageGuide Operator Settings"));
             this.parent = parent;
             this.canEditSettings = canEditSettings;
             this.sloppinessDetector = sloppinessDetector;
             this.forceClientsToUseMod = forceClientsToUseMod;
             this.sloppinessCooldownSeconds = sloppinessCooldownSeconds;
+            this.bigBrotherMessages = sanitizeBigBrotherMessages(bigBrotherMessages);
             this.statusMessage = statusMessage == null ? "" : statusMessage;
         }
 
         @Override
         protected void init() {
             int center = this.width / 2;
-            int top = Math.max(50, this.height / 2 - 82);
+            int panelWidth = Math.min(360, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(44, this.height / 2 - 116);
             CycleButton<Boolean> detectorButton = CycleButton.onOffBuilder(this.sloppinessDetector)
-                    .create(center - 100, top, 200, 20, Component.literal("Sloppiness detector"),
+                    .create(left + 12, top + 28, panelWidth - 24, 20, Component.literal("Big Brother"),
                             (button, enabled) -> this.sloppinessDetector = enabled);
             detectorButton.active = this.canEditSettings;
-            this.addRenderableWidget(detectorButton);
+            this.addRenderableWidget(withTooltip(detectorButton, "Enable or disable Big Brother misplaced-item monitoring on this server."));
             CycleButton<Boolean> forceClientButton = CycleButton.onOffBuilder(this.forceClientsToUseMod)
-                    .create(center - 100, top + 28, 200, 20, Component.literal("Require StorageGuide clients"),
+                    .create(left + 12, top + 56, panelWidth - 24, 20, Component.literal("Require StorageGuide clients"),
                             (button, enabled) -> this.forceClientsToUseMod = enabled);
             forceClientButton.active = this.canEditSettings;
-            this.addRenderableWidget(forceClientButton);
+            this.addRenderableWidget(withTooltip(forceClientButton, "Disconnect players who do not handshake with a compatible StorageGuide client."));
 
             this.cooldownBox = new EditBox(
                     this.font,
-                    center - 100,
-                    top + 56,
-                    200,
+                    left + 12,
+                    top + 100,
+                    panelWidth - 24,
                     20,
-                    Component.literal("Sloppiness cooldown seconds")
+                    Component.literal("Big Brother cooldown seconds")
             );
             this.cooldownBox.setValue(Integer.toString(this.sloppinessCooldownSeconds));
             this.cooldownBox.setHint(Component.literal("Cooldown seconds (1-3600)"));
             this.cooldownBox.setMaxLength(4);
             this.cooldownBox.setEditable(this.canEditSettings);
-            this.addRenderableWidget(this.cooldownBox);
-            this.addRenderableWidget(Button.builder(Component.literal("Back"), button -> this.onClose())
-                    .bounds(center - 100, top + 96, 96, 20).build());
+            this.addRenderableWidget(withTooltip(this.cooldownBox, "Minimum seconds before Big Brother announces again for the same player or chest."));
+
+            this.messagesBox = new EditBox(
+                    this.font,
+                    left + 12,
+                    top + 148,
+                    panelWidth - 24,
+                    20,
+                    Component.literal("Big Brother message templates")
+            );
+            this.messagesBox.setValue(String.join(" | ", this.bigBrotherMessages));
+            this.messagesBox.setHint(Component.literal("Use {playername}; separate options with |"));
+            this.messagesBox.setMaxLength(512);
+            this.messagesBox.setEditable(this.canEditSettings);
+            this.addRenderableWidget(withTooltip(this.messagesBox, "Announcement templates. Use {playername}; separate random options with |."));
+
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Back"), button -> this.onClose())
+                    .bounds(left + 12, top + 194, 96, 20).build(), "Return to the previous screen."));
             Button saveButton = Button.builder(Component.literal("Save"), button -> {
                 int cooldown = parseCooldown(this.cooldownBox.getValue(), this.sloppinessCooldownSeconds);
-                if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V2)) {
+                List<String> messages = parseMessages(this.messagesBox.getValue());
+                if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V3)) {
+                    ClientPlayNetworking.send(new StorageGuideNetworking.UpdateOperatorSettingsV3Payload(
+                            this.sloppinessDetector,
+                            this.forceClientsToUseMod,
+                            cooldown,
+                            messages
+                    ));
+                } else if (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V2)) {
                     ClientPlayNetworking.send(new StorageGuideNetworking.UpdateOperatorSettingsV2Payload(
                             this.sloppinessDetector,
                             this.forceClientsToUseMod,
@@ -815,32 +1005,41 @@ public final class StorageGuideClient implements ClientModInitializer {
                             this.sloppinessDetector
                     ));
                 }
-            }).bounds(center + 4, top + 96, 96, 20).build();
+            }).bounds(left + panelWidth - 108, top + 194, 96, 20).build();
             saveButton.active = this.canEditSettings
-                    && (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V2)
+                    && (canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V3)
+                    || canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V2)
                     || canSend(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS));
-            this.addRenderableWidget(saveButton);
+            this.addRenderableWidget(withTooltip(saveButton, "Save these server-owned operator settings."));
         }
 
         @Override
         public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            int center = this.width / 2;
+            int panelWidth = Math.min(360, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(44, this.height / 2 - 116);
+            drawPanel(graphics, left, top, panelWidth, 226);
             super.extractRenderState(graphics, mouseX, mouseY, delta);
-            graphics.centeredText(this.font, this.title, this.width / 2, 24, 0xFFFFFFFF);
+            graphics.centeredText(this.font, Component.literal("Big Brother Settings"), this.width / 2, top + 8, 0xFFFFFFFF);
             graphics.centeredText(
                     this.font,
                     Component.literal(this.canEditSettings
                             ? "These settings are stored on the server."
                             : "You can view these settings, but only operators can change them."),
                     this.width / 2,
-                    37,
+                    top + 20,
                     0xFFAAAAAA
             );
+            graphics.text(this.font, Component.literal("Announcement cooldown"), left + 12, top + 88, 0xFFDDDDDD);
+            graphics.text(this.font, Component.literal("Message templates"), left + 12, top + 136, 0xFFDDDDDD);
+            graphics.text(this.font, Component.literal("Separate random options with |. Use {playername}."), left + 12, top + 172, 0xFFAAAAAA);
             if (!this.statusMessage.isBlank()) {
                 graphics.centeredText(
                         this.font,
                         Component.literal(this.statusMessage),
                         this.width / 2,
-                        Math.max(50, this.height / 2 - 82) + 80,
+                        top + 220,
                         this.canEditSettings ? 0xFF55FF55 : 0xFFFFAA55
                 );
             }
@@ -852,6 +1051,22 @@ public final class StorageGuideClient implements ClientModInitializer {
             } catch (NumberFormatException ex) {
                 return fallback;
             }
+        }
+
+        private static List<String> parseMessages(String value) {
+            return sanitizeBigBrotherMessages(List.of(value.split("\\|")));
+        }
+
+        private static List<String> sanitizeBigBrotherMessages(List<String> messages) {
+            List<String> sanitized = messages == null ? List.of() : messages.stream()
+                    .filter(message -> message != null && !message.isBlank())
+                    .map(String::trim)
+                    .distinct()
+                    .limit(16)
+                    .toList();
+            return sanitized.isEmpty()
+                    ? List.of("Big Brother caught {playername} slacking off.")
+                    : sanitized;
         }
 
         @Override
@@ -885,102 +1100,178 @@ public final class StorageGuideClient implements ClientModInitializer {
         return luminance >= 128_000 ? 0xFF000000 : 0xFFFFFFFF;
     }
 
+    private static void drawPanel(GuiGraphicsExtractor graphics, int x, int y, int width, int height) {
+        graphics.fill(x, y, x + width, y + height, 0xD0181A20);
+        graphics.outline(x, y, width, height, 0x80FFFFFF);
+        graphics.fill(x + 1, y + 1, x + width - 1, y + 24, 0x502D8CFF);
+    }
+
+    private static void drawScrollbar(
+            GuiGraphicsExtractor graphics,
+            int x,
+            int y,
+            int height,
+            int totalItems,
+            int visibleItems,
+            int scrollOffset
+    ) {
+        if (totalItems <= visibleItems || visibleItems <= 0) {
+            return;
+        }
+
+        graphics.fill(x, y, x + 4, y + height, 0x60303038);
+        int thumbHeight = Math.max(18, height * visibleItems / totalItems);
+        int maxScroll = Math.max(1, totalItems - visibleItems);
+        int availableTravel = Math.max(1, height - thumbHeight);
+        int thumbY = y + (int) Math.round(availableTravel * (scrollOffset / (double) maxScroll));
+        graphics.fill(x, thumbY, x + 4, thumbY + thumbHeight, 0xCC8AB4FF);
+    }
+
+    private static <T extends AbstractWidget> T withTooltip(T widget, String tooltip) {
+        widget.setTooltip(Tooltip.create(Component.literal(tooltip)));
+        widget.setTooltipDelay(Duration.ofMillis(250));
+        return widget;
+    }
+
+    private static void renderItemIcon(GuiGraphicsExtractor graphics, String itemId, int x, int y) {
+        Identifier id = Identifier.tryParse(normalizeClientItemId(itemId));
+        if (id == null) {
+            return;
+        }
+        Item item = BuiltInRegistries.ITEM.getValue(id);
+        if (item != null) {
+            graphics.item(new ItemStack(item), x, y);
+        }
+    }
+
+    private static String posLabel(BlockPos pos) {
+        return pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
+    }
+
     private static final class SloppinessHistoryScreen extends Screen {
-        private static final int VISIBLE_ENTRIES = 7;
+        private static final int VISIBLE_PLAYERS = 7;
         private static final DateTimeFormatter TIME_FORMAT =
                 DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
         private final Screen parent;
         private final List<StorageGuideNetworking.SloppinessHistoryDto> entries;
-        private final List<Button> entryButtons = new ArrayList<>();
-        private Button upButton;
-        private Button downButton;
+        private final List<PlayerHistoryGroup> groups;
+        private final List<Button> playerButtons = new ArrayList<>();
         private int scrollOffset;
 
         private SloppinessHistoryScreen(
                 Screen parent,
                 List<StorageGuideNetworking.SloppinessHistoryDto> entries
         ) {
-            super(Component.literal("StorageGuide Sloppiness History"));
+            super(Component.literal("StorageGuide Big Brother History"));
             this.parent = parent;
-            this.entries = List.copyOf(entries);
+            this.entries = entries.stream()
+                    .sorted(Comparator
+                            .comparing(StorageGuideNetworking.SloppinessHistoryDto::playerName, String.CASE_INSENSITIVE_ORDER)
+                            .thenComparing(StorageGuideNetworking.SloppinessHistoryDto::timestamp, Comparator.reverseOrder()))
+                    .toList();
+            this.groups = groupHistoryByPlayer(this.entries);
         }
 
         @Override
         protected void init() {
             int center = this.width / 2;
+            int panelWidth = Math.min(360, this.width - 32);
+            int left = center - panelWidth / 2;
             int top = Math.max(40, this.height / 2 - 112);
-            this.entryButtons.clear();
+            this.playerButtons.clear();
 
-            for (int i = 0; i < VISIBLE_ENTRIES; i++) {
-                Button row = Button.builder(Component.empty(), button -> {
-                }).bounds(center - 150, top + i * 22, 300, 20).build();
+            for (int i = 0; i < VISIBLE_PLAYERS; i++) {
+                int rowIndex = i;
+                Button row = Button.builder(Component.empty(), button -> openVisiblePlayer(rowIndex))
+                        .bounds(left + 12, top + 38 + i * 23, panelWidth - 24, 21).build();
                 row.active = false;
-                this.entryButtons.add(row);
+                this.playerButtons.add(row);
                 this.addRenderableWidget(row);
             }
 
-            this.upButton = Button.builder(Component.literal("Up"), button -> {
-                this.scrollOffset = Math.max(0, this.scrollOffset - VISIBLE_ENTRIES);
-                refreshEntries();
-            }).bounds(center - 150, top + VISIBLE_ENTRIES * 22 + 6, 64, 20).build();
-            this.addRenderableWidget(this.upButton);
-            this.downButton = Button.builder(Component.literal("Down"), button -> {
-                this.scrollOffset = Math.min(maxScroll(), this.scrollOffset + VISIBLE_ENTRIES);
-                refreshEntries();
-            }).bounds(center - 80, top + VISIBLE_ENTRIES * 22 + 6, 64, 20).build();
-            this.addRenderableWidget(this.downButton);
             this.addRenderableWidget(Button.builder(Component.literal("Back"), button -> this.onClose())
-                    .bounds(center + 86, top + VISIBLE_ENTRIES * 22 + 6, 64, 20).build());
+                    .bounds(center - 48, top + 38 + VISIBLE_PLAYERS * 23 + 8, 96, 20).build());
             refreshEntries();
+        }
+
+        @Override
+        public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+            if (scrollY > 0) {
+                this.scrollOffset = Math.max(0, this.scrollOffset - 1);
+                refreshEntries();
+                return true;
+            }
+            if (scrollY < 0) {
+                this.scrollOffset = Math.min(maxScroll(), this.scrollOffset + 1);
+                refreshEntries();
+                return true;
+            }
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
         }
 
         private void refreshEntries() {
             this.scrollOffset = Math.min(this.scrollOffset, maxScroll());
-            for (int i = 0; i < this.entryButtons.size(); i++) {
+            for (int i = 0; i < this.playerButtons.size(); i++) {
                 int index = this.scrollOffset + i;
-                Button row = this.entryButtons.get(i);
-                if (index >= this.entries.size()) {
+                Button row = this.playerButtons.get(i);
+                if (index >= this.groups.size()) {
                     row.visible = false;
                     continue;
                 }
 
-                StorageGuideNetworking.SloppinessHistoryDto entry = this.entries.get(index);
+                PlayerHistoryGroup group = this.groups.get(index);
                 row.visible = true;
-                row.setMessage(Component.literal(
-                        entry.playerName()
-                                + " • " + cleanItemName(itemPath(entry.itemId()))
-                                + " • " + TIME_FORMAT.format(Instant.ofEpochMilli(entry.timestamp()))
-                ));
+                row.active = true;
+                row.setMessage(Component.literal(group.playerName() + " • " + group.entries().size() + " instance(s)"));
             }
-            this.upButton.active = this.scrollOffset > 0;
-            this.downButton.active = this.scrollOffset < maxScroll();
+        }
+
+        private void openVisiblePlayer(int rowIndex) {
+            int index = this.scrollOffset + rowIndex;
+            if (index >= 0 && index < this.groups.size()) {
+                this.minecraft.setScreen(new BigBrotherPlayerHistoryScreen(this, this.groups.get(index)));
+            }
         }
 
         private int maxScroll() {
-            return Math.max(0, this.entries.size() - VISIBLE_ENTRIES);
+            return Math.max(0, this.groups.size() - VISIBLE_PLAYERS);
         }
 
         @Override
         public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            int center = this.width / 2;
+            int panelWidth = Math.min(360, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(40, this.height / 2 - 112);
+            drawPanel(graphics, left, top, panelWidth, 226);
             super.extractRenderState(graphics, mouseX, mouseY, delta);
-            graphics.centeredText(this.font, this.title, this.width / 2, 18, 0xFFFFFFFF);
+            graphics.centeredText(this.font, this.title, this.width / 2, top + 8, 0xFFFFFFFF);
             graphics.centeredText(
                     this.font,
-                    Component.literal(this.entries.size() + " recorded instance(s), grouped by player"),
+                    Component.literal(this.entries.size() + " caught instance(s) across " + this.groups.size() + " player(s)"),
                     this.width / 2,
-                    29,
+                    top + 22,
                     0xFFAAAAAA
             );
             if (this.entries.isEmpty()) {
                 graphics.centeredText(
                         this.font,
-                        Component.literal("No sloppiness has been recorded."),
+                        Component.literal("Big Brother has not caught anyone yet."),
                         this.width / 2,
                         this.height / 2,
                         0xFFAAAAAA
                 );
+            } else if (this.groups.size() > VISIBLE_PLAYERS) {
+                graphics.centeredText(
+                        this.font,
+                        Component.literal("Scroll to browse players"),
+                        this.width / 2,
+                        top + 38 + VISIBLE_PLAYERS * 23 + 32,
+                        0xFFAAAAAA
+                );
             }
+            drawScrollbar(graphics, left + panelWidth - 8, top + 38, VISIBLE_PLAYERS * 23 - 2, this.groups.size(), VISIBLE_PLAYERS, this.scrollOffset);
         }
 
         @Override
@@ -989,36 +1280,172 @@ public final class StorageGuideClient implements ClientModInitializer {
         }
     }
 
+    private static final class BigBrotherPlayerHistoryScreen extends Screen {
+        private static final int VISIBLE_ENTRIES = 7;
+
+        private final Screen parent;
+        private final PlayerHistoryGroup group;
+        private final List<Button> detailButtons = new ArrayList<>();
+        private int scrollOffset;
+
+        private BigBrotherPlayerHistoryScreen(Screen parent, PlayerHistoryGroup group) {
+            super(Component.literal("Big Brother: " + group.playerName()));
+            this.parent = parent;
+            this.group = group;
+        }
+
+        @Override
+        protected void init() {
+            int center = this.width / 2;
+            int panelWidth = Math.min(420, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(40, this.height / 2 - 112);
+            this.detailButtons.clear();
+
+            for (int i = 0; i < VISIBLE_ENTRIES; i++) {
+                Button row = Button.builder(Component.empty(), button -> {
+                }).bounds(left + 12, top + 38 + i * 23, panelWidth - 24, 21).build();
+                row.active = false;
+                this.detailButtons.add(row);
+                this.addRenderableWidget(row);
+            }
+
+            this.addRenderableWidget(Button.builder(Component.literal("Back"), button -> this.onClose())
+                    .bounds(center - 48, top + 38 + VISIBLE_ENTRIES * 23 + 8, 96, 20).build());
+            refreshEntries();
+        }
+
+        @Override
+        public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+            if (scrollY > 0) {
+                this.scrollOffset = Math.max(0, this.scrollOffset - 1);
+                refreshEntries();
+                return true;
+            }
+            if (scrollY < 0) {
+                this.scrollOffset = Math.min(maxScroll(), this.scrollOffset + 1);
+                refreshEntries();
+                return true;
+            }
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        }
+
+        private void refreshEntries() {
+            this.scrollOffset = Math.min(this.scrollOffset, maxScroll());
+            for (int i = 0; i < this.detailButtons.size(); i++) {
+                int index = this.scrollOffset + i;
+                Button row = this.detailButtons.get(i);
+                if (index >= this.group.entries().size()) {
+                    row.visible = false;
+                    continue;
+                }
+
+                StorageGuideNetworking.SloppinessHistoryDto entry = this.group.entries().get(index);
+                row.visible = true;
+                row.setMessage(Component.literal(
+                        cleanItemName(itemPath(entry.itemId()))
+                                + " • " + SloppinessHistoryScreen.TIME_FORMAT.format(Instant.ofEpochMilli(entry.timestamp()))
+                                + " • " + posLabel(entry.chestPos())
+                ));
+            }
+        }
+
+        private int maxScroll() {
+            return Math.max(0, this.group.entries().size() - VISIBLE_ENTRIES);
+        }
+
+        @Override
+        public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            int center = this.width / 2;
+            int panelWidth = Math.min(420, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(40, this.height / 2 - 112);
+            drawPanel(graphics, left, top, panelWidth, 226);
+            super.extractRenderState(graphics, mouseX, mouseY, delta);
+            graphics.centeredText(this.font, this.title, this.width / 2, top + 8, 0xFFFFFFFF);
+            graphics.centeredText(
+                    this.font,
+                    Component.literal(this.group.entries().size() + " instance(s), newest first"),
+                    this.width / 2,
+                    top + 22,
+                    0xFFAAAAAA
+            );
+            for (int i = 0; i < this.detailButtons.size(); i++) {
+                int index = this.scrollOffset + i;
+                if (index < this.group.entries().size()) {
+                    Button button = this.detailButtons.get(i);
+                    renderItemIcon(graphics, this.group.entries().get(index).itemId(), button.getX() + 3, button.getY() + 2);
+                }
+            }
+            drawScrollbar(graphics, left + panelWidth - 8, top + 38, VISIBLE_ENTRIES * 23 - 2, this.group.entries().size(), VISIBLE_ENTRIES, this.scrollOffset);
+        }
+
+        @Override
+        public void onClose() {
+            this.minecraft.setScreen(this.parent);
+        }
+    }
+
+    private record PlayerHistoryGroup(String playerName, List<StorageGuideNetworking.SloppinessHistoryDto> entries) {
+    }
+
+    private static List<PlayerHistoryGroup> groupHistoryByPlayer(List<StorageGuideNetworking.SloppinessHistoryDto> entries) {
+        Map<String, List<StorageGuideNetworking.SloppinessHistoryDto>> grouped = new LinkedHashMap<>();
+        for (StorageGuideNetworking.SloppinessHistoryDto entry : entries) {
+            grouped.computeIfAbsent(entry.playerName(), ignored -> new ArrayList<>()).add(entry);
+        }
+        return grouped.entrySet().stream()
+                .map(entry -> new PlayerHistoryGroup(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                                .sorted(Comparator.comparing(StorageGuideNetworking.SloppinessHistoryDto::timestamp).reversed())
+                                .toList()
+                ))
+                .sorted(Comparator
+                        .comparingInt((PlayerHistoryGroup group) -> group.entries().size()).reversed()
+                        .thenComparing(PlayerHistoryGroup::playerName, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+    }
+
     private static final class CellEditorScreen extends Screen {
         private static final int VISIBLE_ITEMS = 5;
 
         private final StorageGuideNetworking.CellDto cell;
         private final List<ItemOption> itemOptions = availableItemOptions();
         private final List<Button> itemButtons = new ArrayList<>();
+        private Set<String> originalItemIds;
         private EditBox searchBox;
         private Set<String> selectedItemIds;
+        private boolean originalSloppinessExcluded;
         private boolean sloppinessExcluded;
         private int scrollOffset;
+        private String statusMessage = "Select items, then press Save.";
+        private int statusColor = 0xFFAAAAAA;
 
         private CellEditorScreen(StorageGuideNetworking.CellDto cell) {
             this(cell, false);
         }
 
         private CellEditorScreen(StorageGuideNetworking.CellDto cell, boolean sloppinessExcluded) {
-            super(Component.literal("StorageGuide Cell " + cell.id()));
+            super(Component.literal("Edit Chest Assignment"));
             this.cell = cell;
+            this.originalSloppinessExcluded = sloppinessExcluded;
             this.sloppinessExcluded = sloppinessExcluded;
             this.selectedItemIds = cell.itemIds().stream()
                     .map(StorageGuideClient::normalizeClientItemId)
                     .filter(item -> !item.isBlank())
                     .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+            this.originalItemIds = new LinkedHashSet<>(this.selectedItemIds);
         }
 
         @Override
         protected void init() {
             int center = this.width / 2;
-            int top = Math.max(16, this.height / 2 - 112);
-            this.searchBox = new EditBox(this.font, center - 120, top, 240, 20, Component.literal("Search item"));
+            int panelWidth = Math.min(340, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(16, this.height / 2 - 120);
+            this.itemButtons.clear();
+            this.searchBox = new EditBox(this.font, left + 12, top + 30, panelWidth - 24, 20, Component.literal("Search item"));
             this.searchBox.setMaxLength(64);
             this.searchBox.setHint(Component.literal("emerald"));
             this.searchBox.setResponder(value -> {
@@ -1030,38 +1457,40 @@ public final class StorageGuideClient implements ClientModInitializer {
             for (int i = 0; i < VISIBLE_ITEMS; i++) {
                 int row = i;
                 Button button = Button.builder(Component.empty(), clicked -> selectVisibleItem(row))
-                        .bounds(center - 120, top + 28 + i * 22, 240, 20).build();
+                        .bounds(left + 12, top + 58 + i * 23, panelWidth - 24, 21).build();
                 this.itemButtons.add(button);
                 this.addRenderableWidget(button);
             }
 
-            this.addRenderableWidget(Button.builder(Component.literal("Up"), button -> {
-                this.scrollOffset = Math.max(0, this.scrollOffset - VISIBLE_ITEMS);
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Clear"), button -> {
+                this.selectedItemIds.clear();
+                this.statusMessage = changeSummary("Unsaved");
+                this.statusColor = 0xFFFFD166;
                 refreshItems();
-            }).bounds(center - 120, top + 28 + VISIBLE_ITEMS * 22, 52, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Down"), button -> {
-                this.scrollOffset = Math.min(Math.max(0, filteredItems().size() - VISIBLE_ITEMS), this.scrollOffset + VISIBLE_ITEMS);
-                refreshItems();
-            }).bounds(center - 62, top + 28 + VISIBLE_ITEMS * 22, 58, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Save"), button -> {
-                saveCell(List.copyOf(this.selectedItemIds));
-                this.onClose();
-            }).bounds(center + 4, top + 28 + VISIBLE_ITEMS * 22, 56, 20).build());
-            this.addRenderableWidget(Button.builder(Component.literal("Clear"), button -> {
-                saveCell(List.of());
-                this.onClose();
-            }).bounds(center + 66, top + 28 + VISIBLE_ITEMS * 22, 54, 20).build());
-            this.addRenderableWidget(CycleButton.onOffBuilder(this.sloppinessExcluded)
-                    .create(center - 120, top + 56 + VISIBLE_ITEMS * 22, 240, 20,
-                            Component.literal("Exclude from sloppiness detection"),
-                            (button, excluded) -> this.sloppinessExcluded = excluded));
-            this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
-                    .bounds(center - 40, top + 82 + VISIBLE_ITEMS * 22, 80, 20).build());
+            }).bounds(left + 12, top + 58 + VISIBLE_ITEMS * 23 + 6, 76, 20).build(),
+                    "Remove all item assignments from this draft. Press Save to apply."));
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Cancel"), button -> this.onClose())
+                    .bounds(center - 38, top + 58 + VISIBLE_ITEMS * 23 + 6, 76, 20).build(),
+                    "Close without saving this draft."));
+            this.addRenderableWidget(withTooltip(Button.builder(Component.literal("Save"), button -> saveCellNow())
+                    .bounds(left + panelWidth - 88, top + 58 + VISIBLE_ITEMS * 23 + 6, 76, 20).build(),
+                    "Save the selected assignments and Big Brother exclusion state."));
+            this.addRenderableWidget(withTooltip(CycleButton.onOffBuilder(this.sloppinessExcluded)
+                    .create(left + 12, top + 88 + VISIBLE_ITEMS * 23, panelWidth - 24, 20,
+                            Component.literal("Exclude from Big Brother"),
+                            (button, excluded) -> {
+                                this.sloppinessExcluded = excluded;
+                                this.statusMessage = changeSummary("Unsaved");
+                                this.statusColor = 0xFFFFD166;
+                            }),
+                    "Prevent this chest from creating Big Brother records without changing its item assignments."));
             this.setInitialFocus(this.searchBox);
             refreshItems();
         }
 
         private void saveCell(List<String> itemIds) {
+            this.statusMessage = changeSummary("Saving");
+            this.statusColor = 0xFFFFD166;
             if (canSend(StorageGuideNetworking.EDIT_CELL_V2)) {
                 ClientPlayNetworking.send(new StorageGuideNetworking.EditCellV2Payload(
                         cell.id(),
@@ -1071,6 +1500,49 @@ public final class StorageGuideClient implements ClientModInitializer {
             } else {
                 ClientPlayNetworking.send(new StorageGuideNetworking.EditCellPayload(cell.id(), itemIds));
             }
+        }
+
+        private void saveCellNow() {
+            saveCell(List.copyOf(this.selectedItemIds));
+        }
+
+        private void setStatus(String cellId, boolean success, String message) {
+            if (!this.cell.id().equals(cellId)) {
+                return;
+            }
+            if (success) {
+                this.statusMessage = changeSummary("Saved");
+                this.originalItemIds = new LinkedHashSet<>(this.selectedItemIds);
+                this.originalSloppinessExcluded = this.sloppinessExcluded;
+            } else {
+                this.statusMessage = message == null || message.isBlank() ? "Could not save." : message;
+            }
+            this.statusColor = success ? 0xFF55FF88 : 0xFFFF7777;
+        }
+
+        private String changeSummary(String prefix) {
+            long assigned = this.selectedItemIds.stream()
+                    .filter(item -> !this.originalItemIds.contains(item))
+                    .count();
+            long removed = this.originalItemIds.stream()
+                    .filter(item -> !this.selectedItemIds.contains(item))
+                    .count();
+            boolean exclusionChanged = this.sloppinessExcluded != this.originalSloppinessExcluded;
+
+            List<String> parts = new ArrayList<>();
+            if (assigned > 0) {
+                parts.add("assigned " + assigned + " item(s) to chest");
+            }
+            if (removed > 0) {
+                parts.add("removed " + removed + " item(s) from chest");
+            }
+            if (exclusionChanged) {
+                parts.add(this.sloppinessExcluded ? "excluded from Big Brother" : "included in Big Brother");
+            }
+            if (parts.isEmpty()) {
+                return "No changes to save.";
+            }
+            return prefix + ": " + String.join(", ", parts) + ".";
         }
 
         @Override
@@ -1098,8 +1570,58 @@ public final class StorageGuideClient implements ClientModInitializer {
                 ItemOption option = filtered.get(index);
                 button.visible = true;
                 button.active = true;
-                button.setMessage(Component.literal((selectedItemIds.contains(option.id()) ? "[x] " : "[ ] ") + option.displayName()));
+                boolean selected = selectedItemIds.contains(option.id());
+                button.setMessage(Component.literal("      " + (selected ? "Selected • " : "") + option.displayName()));
             }
+        }
+
+        @Override
+        public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+            if (scrollY > 0) {
+                this.scrollOffset = Math.max(0, this.scrollOffset - 1);
+                refreshItems();
+                return true;
+            }
+            if (scrollY < 0) {
+                this.scrollOffset = Math.min(Math.max(0, filteredItems().size() - VISIBLE_ITEMS), this.scrollOffset + 1);
+                refreshItems();
+                return true;
+            }
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        }
+
+        @Override
+        public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            int center = this.width / 2;
+            int panelWidth = Math.min(340, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(16, this.height / 2 - 120);
+            drawPanel(graphics, left, top, panelWidth, 58 + VISIBLE_ITEMS * 23 + 104);
+            List<ItemOption> filtered = filteredItems();
+            for (int i = 0; i < this.itemButtons.size(); i++) {
+                int index = this.scrollOffset + i;
+                if (index < filtered.size() && this.selectedItemIds.contains(filtered.get(index).id())) {
+                    Button button = this.itemButtons.get(i);
+                    graphics.fill(button.getX() + 1, button.getY() + 1, button.getRight() - 1, button.getBottom() - 1, 0x5539C96B);
+                }
+            }
+            super.extractRenderState(graphics, mouseX, mouseY, delta);
+            graphics.centeredText(this.font, this.title, center, top + 8, 0xFFFFFFFF);
+            graphics.centeredText(this.font, Component.literal(selectedItemIds.size() + " assigned item(s) • " + posLabel(this.cell.pos())), center, top + 20, 0xFFAAAAAA);
+            for (int i = 0; i < this.itemButtons.size(); i++) {
+                int index = this.scrollOffset + i;
+                if (index < filtered.size()) {
+                    Button button = this.itemButtons.get(i);
+                    ItemOption option = filtered.get(index);
+                    if (this.selectedItemIds.contains(option.id())) {
+                        graphics.fill(button.getX() + 2, button.getY() + 2, button.getX() + 6, button.getBottom() - 2, 0xFF55FF88);
+                        graphics.outline(button.getX(), button.getY(), button.getWidth(), button.getHeight(), 0xAA55FF88);
+                    }
+                    renderItemIcon(graphics, option.id(), button.getX() + 4, button.getY() + 2);
+                }
+            }
+            drawScrollbar(graphics, left + panelWidth - 8, top + 58, VISIBLE_ITEMS * 23 - 2, filtered.size(), VISIBLE_ITEMS, this.scrollOffset);
+            graphics.centeredText(this.font, Component.literal(this.statusMessage), center, top + 112 + VISIBLE_ITEMS * 23, this.statusColor);
         }
 
         private void selectVisibleItem(int row) {
@@ -1113,6 +1635,8 @@ public final class StorageGuideClient implements ClientModInitializer {
             if (!selectedItemIds.remove(option.id())) {
                 selectedItemIds.add(option.id());
             }
+            this.statusMessage = changeSummary("Unsaved");
+            this.statusColor = 0xFFFFD166;
             refreshItems();
         }
 
@@ -1134,8 +1658,6 @@ public final class StorageGuideClient implements ClientModInitializer {
         private final List<ItemOption> itemOptions = availableItemOptions();
         private final List<Button> itemButtons = new ArrayList<>();
         private EditBox searchBox;
-        private Button upButton;
-        private Button downButton;
         private int scrollOffset;
 
         private FindItemScreen() {
@@ -1145,11 +1667,13 @@ public final class StorageGuideClient implements ClientModInitializer {
         @Override
         protected void init() {
             int center = this.width / 2;
-            int top = Math.max(24, this.height / 2 - 112);
+            int panelWidth = Math.min(340, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(24, this.height / 2 - 122);
             this.itemButtons.clear();
             this.scrollOffset = 0;
 
-            this.searchBox = new EditBox(this.font, center - 120, top, 240, 20, Component.literal("Search items"));
+            this.searchBox = new EditBox(this.font, left + 12, top + 32, panelWidth - 24, 20, Component.literal("Search items"));
             this.searchBox.setMaxLength(128);
             this.searchBox.setHint(Component.literal("Search items..."));
             this.searchBox.setResponder(value -> {
@@ -1161,26 +1685,14 @@ public final class StorageGuideClient implements ClientModInitializer {
             for (int i = 0; i < VISIBLE_ITEMS; i++) {
                 int row = i;
                 Button button = Button.builder(Component.empty(), clicked -> locateVisibleItem(row))
-                        .bounds(center - 120, top + 28 + i * 22, 240, 20)
+                        .bounds(left + 12, top + 60 + i * 23, panelWidth - 24, 21)
                         .build();
                 this.itemButtons.add(button);
                 this.addRenderableWidget(button);
             }
 
-            this.upButton = Button.builder(Component.literal("Up"), button -> {
-                this.scrollOffset = Math.max(0, this.scrollOffset - VISIBLE_ITEMS);
-                refreshItems();
-            }).bounds(center - 120, top + 28 + VISIBLE_ITEMS * 22, 58, 20).build();
-            this.addRenderableWidget(this.upButton);
-
-            this.downButton = Button.builder(Component.literal("Down"), button -> {
-                this.scrollOffset = Math.min(maxScrollOffset(), this.scrollOffset + VISIBLE_ITEMS);
-                refreshItems();
-            }).bounds(center - 56, top + 28 + VISIBLE_ITEMS * 22, 58, 20).build();
-            this.addRenderableWidget(this.downButton);
-
             this.addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> this.onClose())
-                    .bounds(center + 42, top + 28 + VISIBLE_ITEMS * 22, 78, 20)
+                    .bounds(center - 48, top + 60 + VISIBLE_ITEMS * 23 + 6, 96, 20)
                     .build());
             this.setInitialFocus(this.searchBox);
             refreshItems();
@@ -1210,15 +1722,9 @@ public final class StorageGuideClient implements ClientModInitializer {
                 ItemOption option = filtered.get(index);
                 button.visible = true;
                 button.active = true;
-                button.setMessage(Component.literal(option.displayName()));
+                button.setMessage(Component.literal("      " + option.displayName()));
             }
 
-            if (this.upButton != null) {
-                this.upButton.active = this.scrollOffset > 0;
-            }
-            if (this.downButton != null) {
-                this.downButton.active = this.scrollOffset < maxScrollOffset(filtered.size());
-            }
         }
 
         private boolean locateVisibleItem(int row) {
@@ -1239,6 +1745,45 @@ public final class StorageGuideClient implements ClientModInitializer {
             }
             this.onClose();
             return true;
+        }
+
+        @Override
+        public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+            if (scrollY > 0) {
+                this.scrollOffset = Math.max(0, this.scrollOffset - 1);
+                refreshItems();
+                return true;
+            }
+            if (scrollY < 0) {
+                this.scrollOffset = Math.min(maxScrollOffset(), this.scrollOffset + 1);
+                refreshItems();
+                return true;
+            }
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        }
+
+        @Override
+        public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            int center = this.width / 2;
+            int panelWidth = Math.min(340, this.width - 32);
+            int left = center - panelWidth / 2;
+            int top = Math.max(24, this.height / 2 - 122);
+            drawPanel(graphics, left, top, panelWidth, 60 + VISIBLE_ITEMS * 23 + 40);
+            super.extractRenderState(graphics, mouseX, mouseY, delta);
+            graphics.centeredText(this.font, this.title, center, top + 8, 0xFFFFFFFF);
+            graphics.centeredText(this.font, Component.literal("Type to search, Enter to locate, scroll to browse"), center, top + 21, 0xFFAAAAAA);
+            List<ItemOption> filtered = filteredItems();
+            if (this.searchBox != null && this.searchBox.getValue().isBlank()) {
+                graphics.centeredText(this.font, Component.literal("Start typing an item name"), center, top + 98, 0xFFAAAAAA);
+            }
+            for (int i = 0; i < this.itemButtons.size(); i++) {
+                int index = this.scrollOffset + i;
+                if (index < filtered.size()) {
+                    Button button = this.itemButtons.get(i);
+                    renderItemIcon(graphics, filtered.get(index).id(), button.getX() + 4, button.getY() + 2);
+                }
+            }
+            drawScrollbar(graphics, left + panelWidth - 8, top + 60, VISIBLE_ITEMS * 23 - 2, filtered.size(), VISIBLE_ITEMS, this.scrollOffset);
         }
 
         private List<ItemOption> filteredItems() {

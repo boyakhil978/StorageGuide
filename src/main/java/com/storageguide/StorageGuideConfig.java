@@ -18,10 +18,11 @@ import java.util.UUID;
 public final class StorageGuideConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    int version = 4;
+    int version = 5;
     boolean sloppinessDetector = false;
     boolean forceClientsToUseMod = false;
     int sloppinessCooldownSeconds = 30;
+    List<String> bigBrotherMessages = new ArrayList<>(List.of("Big Brother caught {playername} slacking off."));
     StoredPos topLeft;
     StoredPos bottomRight;
     List<StorageCell> cells = new ArrayList<>();
@@ -46,7 +47,8 @@ public final class StorageGuideConfig {
                 loaded.sloppinessHistory = new ArrayList<>();
             }
             loaded.sloppinessCooldownSeconds = clampCooldown(loaded.sloppinessCooldownSeconds);
-            loaded.version = 4;
+            loaded.setBigBrotherMessages(loaded.bigBrotherMessages);
+            loaded.version = 5;
             loaded.cells.forEach(StorageCell::migrate);
             return loaded;
         } catch (IOException | RuntimeException ex) {
@@ -93,6 +95,14 @@ public final class StorageGuideConfig {
         sloppinessCooldownSeconds = clampCooldown(seconds);
     }
 
+    public List<String> bigBrotherMessages() {
+        return sanitizeBigBrotherMessages(bigBrotherMessages);
+    }
+
+    public void setBigBrotherMessages(List<String> messages) {
+        bigBrotherMessages = sanitizeBigBrotherMessages(messages);
+    }
+
     public List<SloppinessRecord> sloppinessHistory() {
         if (sloppinessHistory == null) {
             sloppinessHistory = new ArrayList<>();
@@ -109,6 +119,19 @@ public final class StorageGuideConfig {
 
     private static int clampCooldown(int seconds) {
         return Math.clamp(seconds <= 0 ? 30 : seconds, 1, 3600);
+    }
+
+    private static List<String> sanitizeBigBrotherMessages(List<String> messages) {
+        List<String> sanitized = messages == null ? List.of() : messages.stream()
+                .filter(message -> message != null && !message.isBlank())
+                .map(String::trim)
+                .distinct()
+                .limit(16)
+                .toList();
+        if (sanitized.isEmpty()) {
+            return new ArrayList<>(List.of("Big Brother caught {playername} slacking off."));
+        }
+        return new ArrayList<>(sanitized);
     }
 
     public void rebuild(BlockPos topLeft, BlockPos bottomRight) {

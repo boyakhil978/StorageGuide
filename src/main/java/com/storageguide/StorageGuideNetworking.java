@@ -31,14 +31,18 @@ public final class StorageGuideNetworking {
     public static final CustomPacketPayload.Type<RequestOperatorSettingsPayload> REQUEST_OPERATOR_SETTINGS = type("request_operator_settings");
     public static final CustomPacketPayload.Type<UpdateOperatorSettingsPayload> UPDATE_OPERATOR_SETTINGS = type("update_operator_settings");
     public static final CustomPacketPayload.Type<UpdateOperatorSettingsV2Payload> UPDATE_OPERATOR_SETTINGS_V2 = type("update_operator_settings_v2");
+    public static final CustomPacketPayload.Type<UpdateOperatorSettingsV3Payload> UPDATE_OPERATOR_SETTINGS_V3 = type("update_operator_settings_v3");
     public static final CustomPacketPayload.Type<EditCellV2Payload> EDIT_CELL_V2 = type("edit_cell_v2");
     public static final CustomPacketPayload.Type<RequestSloppinessHistoryPayload> REQUEST_SLOPPINESS_HISTORY = type("request_sloppiness_history");
     public static final CustomPacketPayload.Type<StatePayload> STATE = type("state");
     public static final CustomPacketPayload.Type<HighlightPayload> HIGHLIGHT = type("highlight");
+    public static final CustomPacketPayload.Type<OpenClientSettingsPayload> OPEN_CLIENT_SETTINGS = type("open_client_settings");
     public static final CustomPacketPayload.Type<OpenEditorPayload> OPEN_EDITOR = type("open_editor");
+    public static final CustomPacketPayload.Type<CellEditStatusPayload> CELL_EDIT_STATUS = type("cell_edit_status");
     public static final CustomPacketPayload.Type<MessagePayload> MESSAGE = type("message");
     public static final CustomPacketPayload.Type<OpenOperatorSettingsPayload> OPEN_OPERATOR_SETTINGS = type("open_operator_settings");
     public static final CustomPacketPayload.Type<OpenOperatorSettingsV2Payload> OPEN_OPERATOR_SETTINGS_V2 = type("open_operator_settings_v2");
+    public static final CustomPacketPayload.Type<OpenOperatorSettingsV3Payload> OPEN_OPERATOR_SETTINGS_V3 = type("open_operator_settings_v3");
     public static final CustomPacketPayload.Type<OpenEditorV2Payload> OPEN_EDITOR_V2 = type("open_editor_v2");
     public static final CustomPacketPayload.Type<OpenSloppinessHistoryPayload> OPEN_SLOPPINESS_HISTORY = type("open_sloppiness_history");
 
@@ -56,15 +60,19 @@ public final class StorageGuideNetworking {
         PayloadTypeRegistry.serverboundPlay().register(REQUEST_OPERATOR_SETTINGS, RequestOperatorSettingsPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(UPDATE_OPERATOR_SETTINGS, UpdateOperatorSettingsPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(UPDATE_OPERATOR_SETTINGS_V2, UpdateOperatorSettingsV2Payload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(UPDATE_OPERATOR_SETTINGS_V3, UpdateOperatorSettingsV3Payload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(EDIT_CELL_V2, EditCellV2Payload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(REQUEST_SLOPPINESS_HISTORY, RequestSloppinessHistoryPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(STATE, StatePayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(HIGHLIGHT, HighlightPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(OPEN_CLIENT_SETTINGS, OpenClientSettingsPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_EDITOR, OpenEditorPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(CELL_EDIT_STATUS, CellEditStatusPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(MESSAGE, MessagePayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(SERVER_HELLO, ServerHelloPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_OPERATOR_SETTINGS, OpenOperatorSettingsPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_OPERATOR_SETTINGS_V2, OpenOperatorSettingsV2Payload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(OPEN_OPERATOR_SETTINGS_V3, OpenOperatorSettingsV3Payload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_EDITOR_V2, OpenEditorV2Payload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(OPEN_SLOPPINESS_HISTORY, OpenSloppinessHistoryPayload.CODEC);
     }
@@ -237,6 +245,26 @@ public final class StorageGuideNetworking {
         }
     }
 
+    public record UpdateOperatorSettingsV3Payload(
+            boolean bigBrotherEnabled,
+            boolean forceClientsToUseMod,
+            int announcementCooldownSeconds,
+            List<String> bigBrotherMessages
+    ) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, UpdateOperatorSettingsV3Payload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, UpdateOperatorSettingsV3Payload::bigBrotherEnabled,
+                ByteBufCodecs.BOOL, UpdateOperatorSettingsV3Payload::forceClientsToUseMod,
+                ByteBufCodecs.VAR_INT, UpdateOperatorSettingsV3Payload::announcementCooldownSeconds,
+                ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8, 16), UpdateOperatorSettingsV3Payload::bigBrotherMessages,
+                UpdateOperatorSettingsV3Payload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return UPDATE_OPERATOR_SETTINGS_V3;
+        }
+    }
+
     public record EditCellV2Payload(
             String cellId,
             List<String> itemIds,
@@ -301,6 +329,16 @@ public final class StorageGuideNetworking {
         }
     }
 
+    public record OpenClientSettingsPayload() implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, OpenClientSettingsPayload> CODEC =
+                StreamCodec.unit(new OpenClientSettingsPayload());
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return OPEN_CLIENT_SETTINGS;
+        }
+    }
+
     public record OpenEditorPayload(CellDto cell) implements CustomPacketPayload {
         static final StreamCodec<RegistryFriendlyByteBuf, OpenEditorPayload> CODEC = StreamCodec.composite(
                 CellDto.CODEC, OpenEditorPayload::cell,
@@ -310,6 +348,20 @@ public final class StorageGuideNetworking {
         @Override
         public Type<? extends CustomPacketPayload> type() {
             return OPEN_EDITOR;
+        }
+    }
+
+    public record CellEditStatusPayload(String cellId, boolean success, String message) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, CellEditStatusPayload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8, CellEditStatusPayload::cellId,
+                ByteBufCodecs.BOOL, CellEditStatusPayload::success,
+                ByteBufCodecs.STRING_UTF8, CellEditStatusPayload::message,
+                CellEditStatusPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return CELL_EDIT_STATUS;
         }
     }
 
@@ -362,6 +414,30 @@ public final class StorageGuideNetworking {
         @Override
         public Type<? extends CustomPacketPayload> type() {
             return OPEN_OPERATOR_SETTINGS_V2;
+        }
+    }
+
+    public record OpenOperatorSettingsV3Payload(
+            boolean canEdit,
+            boolean bigBrotherEnabled,
+            boolean forceClientsToUseMod,
+            int announcementCooldownSeconds,
+            List<String> bigBrotherMessages,
+            String statusMessage
+    ) implements CustomPacketPayload {
+        static final StreamCodec<RegistryFriendlyByteBuf, OpenOperatorSettingsV3Payload> CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, OpenOperatorSettingsV3Payload::canEdit,
+                ByteBufCodecs.BOOL, OpenOperatorSettingsV3Payload::bigBrotherEnabled,
+                ByteBufCodecs.BOOL, OpenOperatorSettingsV3Payload::forceClientsToUseMod,
+                ByteBufCodecs.VAR_INT, OpenOperatorSettingsV3Payload::announcementCooldownSeconds,
+                ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.STRING_UTF8, 16), OpenOperatorSettingsV3Payload::bigBrotherMessages,
+                ByteBufCodecs.STRING_UTF8, OpenOperatorSettingsV3Payload::statusMessage,
+                OpenOperatorSettingsV3Payload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return OPEN_OPERATOR_SETTINGS_V3;
         }
     }
 

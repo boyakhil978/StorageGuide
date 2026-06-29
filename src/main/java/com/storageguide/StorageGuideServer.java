@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class StorageGuideServer {
     private static final long CLIENT_HANDSHAKE_GRACE_MS = 5_000L;
@@ -104,6 +105,14 @@ public final class StorageGuideServer {
                         payload.forceClientsToUseMod(),
                         payload.sloppinessCooldownSeconds()
                 )));
+        ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.UPDATE_OPERATOR_SETTINGS_V3, (payload, context) ->
+                context.server().execute(() -> updateOperatorSettings(
+                        context.player(),
+                        payload.bigBrotherEnabled(),
+                        payload.forceClientsToUseMod(),
+                        payload.announcementCooldownSeconds(),
+                        payload.bigBrotherMessages()
+                )));
         ServerPlayNetworking.registerGlobalReceiver(StorageGuideNetworking.EDIT_CELL_V2, (payload, context) ->
                 context.server().execute(() -> editCell(
                         context.player(),
@@ -126,6 +135,13 @@ public final class StorageGuideServer {
     private static void receiveClientHello(ServerPlayer player, String version, int protocolVersion) {
         clientVersions.put(player.getUUID(), new ClientVersion(version, protocolVersion));
         clientHandshakeDeadlines.remove(player.getUUID());
+        if (StorageGuideMod.compareVersions(version, StorageGuideMod.version()) < 0) {
+            message(player, "Your StorageGuide client is older than this server (client "
+                    + version
+                    + ", server "
+                    + StorageGuideMod.version()
+                    + "). Please upgrade StorageGuide for the best compatibility.");
+        }
         if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.SERVER_HELLO)) {
             ServerPlayNetworking.send(player, new StorageGuideNetworking.ServerHelloPayload(
                     StorageGuideMod.version(),
@@ -232,13 +248,13 @@ public final class StorageGuideServer {
             Boolean sloppinessExcluded
     ) {
         if (!canEdit(player)) {
-            message(player, "StorageGuide editing requires operator permission.");
+            sendCellEditStatus(player, cellId, false, "Operator permission is required to edit this cell.");
             return;
         }
 
         Optional<StorageGuideConfig.StorageCell> cell = config.findCellById(cellId);
         if (cell.isEmpty()) {
-            message(player, "StorageGuide cell no longer exists.");
+            sendCellEditStatus(player, cellId, false, "This cell no longer exists.");
             return;
         }
 
@@ -250,11 +266,11 @@ public final class StorageGuideServer {
 
         for (String itemId : normalized) {
             if (Identifier.tryParse(itemId) == null) {
-                message(player, "StorageGuide item ids must look like emerald or minecraft:emerald.");
+                sendCellEditStatus(player, cellId, false, "Item ids must look like emerald or minecraft:emerald.");
                 return;
             }
             if (!BuiltInRegistries.ITEM.containsKey(Identifier.parse(itemId))) {
-                message(player, "StorageGuide does not know item id " + itemId + ".");
+                sendCellEditStatus(player, cellId, false, "StorageGuide does not know item id " + itemId + ".");
                 return;
             }
         }
@@ -275,7 +291,9 @@ public final class StorageGuideServer {
         save();
         rebuildCaches();
         sendStateToAll();
-        message(player, normalized.isEmpty() ? "StorageGuide cell cleared." : "StorageGuide cell assigned " + normalized.size() + " item(s).");
+        sendCellEditStatus(player, cellId, true, normalized.isEmpty()
+                ? "Cell cleared."
+                : "Saved " + normalized.size() + " assigned item(s).");
     }
 
     public static void openEditor(ServerPlayer player, BlockPos pos) {
@@ -316,12 +334,21 @@ public final class StorageGuideServer {
         );
     }
 
+    public static void openClientSettings(ServerPlayer player) {
+        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_CLIENT_SETTINGS)) {
+            ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenClientSettingsPayload());
+        } else {
+            message(player, "Your StorageGuide client does not support opening client settings from commands.");
+        }
+    }
+
     private static void updateOperatorSettings(ServerPlayer player, boolean sloppinessDetector) {
         updateOperatorSettings(
                 player,
                 sloppinessDetector,
                 config.forceClientsToUseMod(),
-                config.sloppinessCooldownSeconds()
+                config.sloppinessCooldownSeconds(),
+                config.bigBrotherMessages()
         );
     }
 
@@ -331,6 +358,22 @@ public final class StorageGuideServer {
             boolean forceClientsToUseMod,
             int sloppinessCooldownSeconds
     ) {
+        updateOperatorSettings(
+                player,
+                sloppinessDetector,
+                forceClientsToUseMod,
+                sloppinessCooldownSeconds,
+                config.bigBrotherMessages()
+        );
+    }
+
+    private static void updateOperatorSettings(
+            ServerPlayer player,
+            boolean sloppinessDetector,
+            boolean forceClientsToUseMod,
+            int sloppinessCooldownSeconds,
+            List<String> bigBrotherMessages
+    ) {
         if (!canEdit(player)) {
             sendOperatorSettings(player, false, "Operator permission is required to change server settings.");
             return;
@@ -339,13 +382,23 @@ public final class StorageGuideServer {
         config.setSloppinessDetector(sloppinessDetector);
         config.setForceClientsToUseMod(forceClientsToUseMod);
         config.setSloppinessCooldownSeconds(sloppinessCooldownSeconds);
+        config.setBigBrotherMessages(bigBrotherMessages);
         save();
         refreshClientEnforcement();
         sendOperatorSettings(player, true, "Operator settings saved.");
     }
 
     private static void sendOperatorSettings(ServerPlayer player, boolean canEdit, String statusMessage) {
-        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V2)) {
+        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V3)) {
+            ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsV3Payload(
+                    canEdit,
+                    config.sloppinessDetector(),
+                    config.forceClientsToUseMod(),
+                    config.sloppinessCooldownSeconds(),
+                    config.bigBrotherMessages(),
+                    statusMessage
+            ));
+        } else if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_OPERATOR_SETTINGS_V2)) {
             ServerPlayNetworking.send(player, new StorageGuideNetworking.OpenOperatorSettingsV2Payload(
                     canEdit,
                     config.sloppinessDetector(),
@@ -364,7 +417,7 @@ public final class StorageGuideServer {
 
     public static void sendSloppinessHistory(ServerPlayer player) {
         if (!ServerPlayNetworking.canSend(player, StorageGuideNetworking.OPEN_SLOPPINESS_HISTORY)) {
-            message(player, "Your StorageGuide client does not support the sloppiness history menu.");
+            message(player, "Your StorageGuide client does not support the Big Brother history menu.");
             return;
         }
 
@@ -422,6 +475,14 @@ public final class StorageGuideServer {
     private static void sendIfSupported(ServerPlayer player, CustomPacketPayload payload) {
         if (ServerPlayNetworking.canSend(player, payload.type())) {
             ServerPlayNetworking.send(player, payload);
+        }
+    }
+
+    private static void sendCellEditStatus(ServerPlayer player, String cellId, boolean success, String message) {
+        if (ServerPlayNetworking.canSend(player, StorageGuideNetworking.CELL_EDIT_STATUS)) {
+            ServerPlayNetworking.send(player, new StorageGuideNetworking.CellEditStatusPayload(cellId, success, message));
+        } else {
+            message(player, message);
         }
     }
 
@@ -599,8 +660,16 @@ public final class StorageGuideServer {
         lastPlayerSloppinessAnnouncement.put(player.getUUID(), now);
         lastChestSloppinessAnnouncement.put(chestPos, now);
         if (activeServer != null) {
-            activeServer.getPlayerList().broadcastSystemMessage(Component.literal("Sloppiness detected " + player.getScoreboardName() + "!"), false);
+            activeServer.getPlayerList().broadcastSystemMessage(Component.literal(renderBigBrotherMessage(player)), false);
         }
+    }
+
+    private static String renderBigBrotherMessage(ServerPlayer player) {
+        List<String> messages = config.bigBrotherMessages();
+        String template = messages.get(ThreadLocalRandom.current().nextInt(messages.size()));
+        return template
+                .replace("{playername}", player.getScoreboardName())
+                .replace("{player}", player.getScoreboardName());
     }
 
     private static void recordSloppiness(ServerPlayer player, RelevantChest chest, ItemStack stack) {
