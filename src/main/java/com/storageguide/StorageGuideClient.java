@@ -38,7 +38,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -86,9 +85,9 @@ public final class StorageGuideClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         clientConfig = StorageGuideClientConfig.load();
-        this.selectOrEditKey = registerKey("select_or_edit", GLFW.GLFW_KEY_LEFT_BRACKET);
-        this.locateHeldKey = registerKey("locate_held_item", GLFW.GLFW_KEY_GRAVE_ACCENT);
-        this.findMenuKey = registerKey("find_menu", GLFW.GLFW_KEY_O);
+        this.selectOrEditKey = registerKey("select_or_edit", InputConstants.KEY_LBRACKET);
+        this.locateHeldKey = registerKey("locate_held_item", InputConstants.KEY_GRAVE);
+        this.findMenuKey = registerKey("find_menu", InputConstants.KEY_O);
         selectOrEditMapping = this.selectOrEditKey;
         locateHeldMapping = this.locateHeldKey;
         findMenuMapping = this.findMenuKey;
@@ -101,7 +100,7 @@ public final class StorageGuideClient implements ClientModInitializer {
     private KeyMapping registerKey(String name, int defaultKey) {
         return KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key." + StorageGuideMod.MOD_ID + "." + name,
-                InputConstants.Type.KEYSYM,
+                InputConstants.Type.KEYBOARD,
                 defaultKey,
                 this.category
         ));
@@ -790,14 +789,14 @@ public final class StorageGuideClient implements ClientModInitializer {
         @Override
         public boolean keyPressed(KeyEvent event) {
             if (this.listeningForKey != null) {
-                if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+                if (event.key() == InputConstants.KEY_ESCAPE) {
                     this.listeningForKey = null;
                     this.operatorStatusMessage = "Keybind change cancelled.";
                     this.rebuildWidgets();
                     return true;
                 }
 
-                InputConstants.Key key = event.key() == GLFW.GLFW_KEY_BACKSPACE || event.key() == GLFW.GLFW_KEY_DELETE
+                InputConstants.Key key = event.key() == InputConstants.KEY_BACKSPACE || event.key() == InputConstants.KEY_DELETE
                         ? InputConstants.UNKNOWN
                         : InputConstants.getKey(event);
                 applyKeybind(key);
@@ -1773,7 +1772,7 @@ public final class StorageGuideClient implements ClientModInitializer {
 
         @Override
         public boolean keyPressed(KeyEvent event) {
-            if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+            if (event.key() == InputConstants.KEY_RETURN || event.key() == InputConstants.KEY_NUMPADENTER) {
                 return locateVisibleItem(0);
             }
             return super.keyPressed(event);

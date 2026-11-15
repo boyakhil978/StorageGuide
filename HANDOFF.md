@@ -1,21 +1,21 @@
 # StorageGuide Handoff
 
-Last updated: June 29, 2026
+Last updated: November 14, 2026
 
 ## Current State
 
 - Branch: `main`
 - Remote: `https://github.com/boyakhil978/StorageGuide.git`
-- Project version: `2.4.1`
-- Latest stable release: `2.4.1`
-- Stable release tag: `v2.4.1`
+- Project version: `2.5.0`
+- Latest stable release: `2.5.0`
+- Stable release tag: `v2.5.0`
 - `./gradlew clean build` passes.
 - Fabric metadata must identify the author as `Akhil Boyapati`.
 - The in-game mod icon is `assets/storageguide/icon.png`, a 512×512 PNG packaged inside the jar.
 
 ## Project Summary
 
-StorageGuide is a Fabric client/server mod for Minecraft `26.2+`. A server operator defines a storage-wall grid and assigns one or more item types to each chest cell. Players can then locate assigned items using a held-item shortcut or finder menu.
+StorageGuide is a Fabric client/server mod for Minecraft `26.3+`. A server operator defines a storage-wall grid and assigns one or more item types to each chest cell. Players can then locate assigned items using a held-item shortcut or finder menu.
 
 The server owns the grid and assignments in `config/storageguide.json`. Clients render highlights and provide the editing and lookup interfaces.
 
@@ -99,6 +99,14 @@ The operator settings screen is intentionally server-authoritative. All new payl
 - Added hover tooltips to StorageGuide client settings, keybinds, color picker controls, and operator settings.
 - Added older-client detection: when a joining client reports a StorageGuide version lower than the server, the server recommends upgrading. Clients also warn if a newer server version is advertised in `server_hello`.
 
+## v2.5.0 Work
+
+- Updated the build target to Minecraft `26.3`, Fabric Loader `0.20.1+`, Fabric API `0.166.2+26.3`, and optional Mod Menu `21.0.1+`.
+- Updated Fabric Loom to `1.19.4` and the Gradle wrapper to `9.9.1` (Loom 1.19 requires Gradle 9.8+).
+- Minecraft 26.3 replaced GLFW with SDL input. Default keybinds and screen key checks now use `InputConstants.KEY_*` scancodes, and keybindings use `InputConstants.Type.KEYBOARD`.
+- `RenderPipeline` moved to `com.mojang.renderpearl.api.pipeline`; `HudMixin` now targets the new `blitSprite` descriptor.
+- Minecraft `26.2` players should stay on StorageGuide `2.4.1`.
+
 ## Important Files
 
 - `src/main/java/com/storageguide/StorageGuideServer.java`
@@ -131,10 +139,10 @@ The operator settings screen is intentionally server-authoritative. All new payl
 Requirements:
 
 - Java 25+
-- Minecraft `26.2+`
-- Fabric Loader `0.19.3+`
-- Fabric API `0.153.0+26.2`
-- Mod Menu `20.0.0-beta.4+` for optional client configuration integration
+- Minecraft `26.3+`
+- Fabric Loader `0.20.1+`
+- Fabric API `0.166.2+26.3`
+- Mod Menu `21.0.1+` for optional client configuration integration
 
 Build with:
 
@@ -217,7 +225,7 @@ Still pending:
 
 ## Notes for the Next Maintainer
 
-- `mod_version` is `2.4.1` in `gradle.properties`.
+- `mod_version` is `2.5.0` in `gradle.properties`.
 - Do not move or overwrite existing stable tags.
 - Never change the codec of an existing payload ID. Add a new payload ID and negotiate support.
 - Before a future release, choose the next version, update release-facing documentation, rebuild, inspect the jar metadata/icon, and perform the in-game checks above.

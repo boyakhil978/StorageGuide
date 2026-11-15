@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.5.0 - Stable
+
+### Compatibility
+
+- Updated the build target to Minecraft `26.3`.
+- Updated Fabric Loader support to `0.20.1+`.
+- Updated Fabric API support to `0.166.2+26.3`.
+- Updated optional Mod Menu support to `21.0.1+`.
+- Updated Fabric Loom to `1.19.4` and the Gradle wrapper to `9.9.1`.
+
+### Fixes
+
+- Updated keybinding defaults and menu key handling for Minecraft 26.3's switch from GLFW to SDL input.
+- Updated the hotbar-status mixin for `RenderPipeline` moving to `com.mojang.renderpearl.api.pipeline`.
+
+### Notes
+
+- This release requires Minecraft `26.3`. Minecraft `26.2` players should stay on StorageGuide `2.4.1`.
+
 ## v2.3.0 - Stable
 
 ### Operator Controls
